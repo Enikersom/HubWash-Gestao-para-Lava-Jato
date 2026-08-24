@@ -27,8 +27,8 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
   }, [isSuccess]);
 
   const handleChange = (index: number, value: string) => {
-    const cleaned = value.replace(/\D/g, '');
-    const char = cleaned.slice(-1);
+    // Permite caracteres alfanuméricos (letras e números)
+    const char = value.slice(-1);
 
     const newOtp = [...otp];
     newOtp[index] = char;
@@ -63,7 +63,7 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
-    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    const pastedData = e.clipboardData.getData('text').trim().slice(0, 6);
     if (!pastedData) return;
 
     const newOtp = [...otp];
@@ -78,10 +78,10 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
   };
 
   const handleVerify = () => {
-    const fullOtp = otp.join('');
+    const fullOtp = otp.join('').trim();
 
     if (fullOtp.length < 6) {
-      setMessage({ text: 'Por favor, preencha todos os 6 dígitos da senha.', type: 'error' });
+      setMessage({ text: 'Por favor, preencha os 6 dígitos/caracteres da senha.', type: 'error' });
       return;
     }
 
@@ -99,15 +99,32 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
         return;
       }
 
-      // 2. Verificação estrita e dinâmica apenas com lava-jatos cadastrados no banco
+      // 2. Verificação dinâmica com lava-jatos cadastrados no banco
       let unidadeEncontrada: any = null;
       try {
         const salvos = localStorage.getItem('hubwash_lava_jatos');
+        let lista: any[] = [];
         if (salvos) {
-          const lista = JSON.parse(salvos);
-          if (Array.isArray(lista)) {
-            unidadeEncontrada = lista.find((u: any) => String(u.senhaProvisoria).trim() === fullOtp);
-          }
+          lista = JSON.parse(salvos);
+        } else {
+          // Inicializa lista padrão se ainda não existir
+          lista = [
+            {
+              id: 'pitstop',
+              nomeFantasia: 'Pit Stop Lava Jato',
+              senhaProvisoria: 'pit123',
+              statusPlano: 'ativo'
+            }
+          ];
+          localStorage.setItem('hubwash_lava_jatos', JSON.stringify(lista));
+        }
+
+        if (Array.isArray(lista)) {
+          const fullOtpLower = fullOtp.toLowerCase();
+          unidadeEncontrada = lista.find((u: any) => {
+            const senhaSalva = String(u.senhaProvisoria || '').trim();
+            return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
+          });
         }
       } catch (e) {
         console.error(e);
@@ -181,7 +198,7 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
                   }}
                   className={`otp-input ${digit ? 'filled' : ''}`}
                   type="password"
-                  inputMode="numeric"
+                  inputMode="text"
                   maxLength={1}
                   autoComplete={index === 0 ? 'one-time-code' : 'off'}
                   value={digit}

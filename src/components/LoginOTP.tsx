@@ -232,15 +232,6 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
             <div className="mt-6 pt-5 border-t border-slate-800 space-y-2.5 text-center">
               <button
                 type="button"
-                onClick={() => onSuccess('cliente', getPrimeiraUnidade(), 'cadastro')}
-                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-900/30 transition cursor-pointer flex items-center justify-center gap-2"
-              >
-                <UserPlus size={16} />
-                <span>Cadastrar</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => onSuccess('cliente', getPrimeiraUnidade(), 'login')}
                 className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2"
               >

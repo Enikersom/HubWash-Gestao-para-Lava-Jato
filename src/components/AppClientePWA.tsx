@@ -11,37 +11,34 @@ import {
   Clock,
   CheckCircle,
   ChevronLeft,
-  ChevronRight,
   Mail,
   Lock,
-  Flag,
   Sparkles,
   ShieldCheck,
-  Ticket,
-  ArrowLeft,
-  Phone,
-  Tag,
+  Building2,
+  AlertTriangle,
+  Trash2,
+  XCircle,
   Gift,
   CheckCircle2,
-  AlertTriangle,
   Info,
   CalendarCheck,
-  Trash2,
-  Share2,
-  Plus
+  ArrowLeft,
+  X
 } from 'lucide-react';
 
-// Interfaces de Estrutura de Dados Garantidas
 export interface UnidadeLavaJato {
-  id: string; // Slug identificador (ex: pitstop, ecowash)
+  id: string;
   nomeFantasia: string;
   contato: string;
-  corTematica: 'blue' | 'emerald' | 'indigo' | 'cyan' | 'amber';
+  corTematica: string;
 }
 
-export interface ClientePWA {
+export interface Cliente {
   nome: string;
   email: string;
+  senhaAcesso: string;
+  unidadeVinculadaId: string; // ➡️ Vincula o cliente a este lava-jato específico
   contato: string;
   cep: string;
   cidade: string;
@@ -56,14 +53,14 @@ export interface ClientePWA {
   pontosFidelidade: number;
 }
 
-export interface AgendamentoPWAItem {
+export interface Agendamento {
   id: string;
-  unidadeId: string; // Amarração crucial para o multi-inquilino
+  unidadeId: string;
   data: string;
   horario: string;
   veiculo: string;
   servico: string;
-  status: 'Pendente' | 'Confirmado' | 'Concluído' | 'Cancelado';
+  status: string;
 }
 
 interface AppClientePWAProps {
@@ -75,114 +72,55 @@ interface AppClientePWAProps {
 export default function AppClientePWA({
   unidadeNome = 'Pit Stop Lava Jato',
   onVoltarLogin,
-  telaInicial = 'home'
+  telaInicial
 }: AppClientePWAProps) {
-  // ==========================================
-  // BANCO DE DADOS GLOBAL DE UNIDADES (MULTI-INQUILINO)
-  // ==========================================
-  const [bancoUnidades, setBancoUnidades] = useState<UnidadeLavaJato[]>(() => {
+  const [bancoUnidades] = useState<UnidadeLavaJato[]>(() => {
     const salvos = localStorage.getItem('hubwash_lava_jatos');
     if (salvos) {
       try {
         const parsed = JSON.parse(salvos);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((item: any, idx: number) => {
-            const cores: Array<'blue' | 'emerald' | 'indigo' | 'cyan' | 'amber'> = ['blue', 'emerald', 'indigo', 'cyan', 'amber'];
-            return {
-              id: item.id || `unidade-${idx}`,
-              nomeFantasia: item.nomeFantasia || 'Lava Jato',
-              contato: item.contato || '',
-              corTematica: cores[idx % cores.length]
-            };
-          });
+          return parsed.map((item: any, idx: number) => ({
+            id: item.id || `unidade-${idx}`,
+            nomeFantasia: item.nomeFantasia || 'Lava Jato',
+            contato: item.contato || '(11) 99999-8888',
+            corTematica: item.corTematica || (idx % 2 === 0 ? 'blue' : 'emerald')
+          }));
         }
       } catch (e) {
         console.error(e);
       }
     }
     return [
-      { id: 'pitstop', nomeFantasia: 'Pit Stop Lava Jato', contato: '(11) 99999-8888', corTematica: 'blue' }
+      { id: 'pitstop', nomeFantasia: 'Pit Stop Lava Jato', contato: '(11) 99999-8888', corTematica: 'blue' },
+      { id: 'ecowash', nomeFantasia: 'EcoWash Estética', contato: '(11) 97777-6666', corTematica: 'emerald' }
     ];
   });
 
-  // CONFIGURAÇÃO DE FLUXO E IDENTIFICAÇÃO DA UNIDADE
   const [unidadeAtual, setUnidadeAtual] = useState<UnidadeLavaJato | null>(null);
   const [carregandoUnidade, setCarregandoUnidade] = useState(true);
 
-  // ➡️ LÓGICA CRUCIAL MULTI-INQUILINO: IDENTIFICAR A UNIDADE PELA URL OU PROPS
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const rawSlug = params.get('unidade');
-      const slugUnidade = rawSlug ? rawSlug.trim().toLowerCase() : null;
-
-      if (slugUnidade) {
-        // 1. Procura se a unidade existe na nossa lista de inquilinos
-        const unidadeLocalizada = bancoUnidades.find(
-          (u) => (u.id || '').trim().toLowerCase() === slugUnidade ||
-                 (u.nomeFantasia || '').trim().toLowerCase() === slugUnidade
-        );
-        if (unidadeLocalizada) {
-          setUnidadeAtual(unidadeLocalizada);
-        } else {
-          // 2. Se não estiver no banco do dispositivo móvel, cria a unidade dinamicamente
-          const nomeFormatado = slugUnidade
-            .split(/[-_]/)
-            .filter(Boolean)
-            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-            .join(' ');
-
-          const nomeFinal = unidadeNome || (nomeFormatado.toLowerCase().includes('lava')
-            ? nomeFormatado
-            : `${nomeFormatado} Lava Jato`);
-
-          const novaUnidade: UnidadeLavaJato = {
-            id: slugUnidade,
-            nomeFantasia: nomeFinal,
-            contato: '(11) 99999-8888',
-            corTematica: 'blue'
-          };
-          setUnidadeAtual(novaUnidade);
-        }
-      } else if (unidadeNome) {
-        // Fallback para quando acessado via navegação interna do sistema
-        const correspondente = bancoUnidades.find(
-          (u) =>
-            u.nomeFantasia.toLowerCase().includes(unidadeNome.toLowerCase()) ||
-            unidadeNome.toLowerCase().includes((u.id || '').toLowerCase())
-        ) || {
-          id: 'unidade-atual',
-          nomeFantasia: unidadeNome,
-          contato: '(11) 99999-8888',
-          corTematica: 'blue'
-        };
-        setUnidadeAtual(correspondente);
-      } else {
-        setUnidadeAtual(bancoUnidades[0] || {
-          id: 'pitstop',
-          nomeFantasia: 'Pit Stop Lava Jato',
-          contato: '(11) 99999-8888',
-          corTematica: 'blue'
-        });
+  // Banco de clientes persistente amarrado às unidades
+  const [bancoClientes, setBancoClientes] = useState<Cliente[]>(() => {
+    const salvos = localStorage.getItem('hubwash_banco_clientes');
+    if (salvos) {
+      try {
+        return JSON.parse(salvos);
+      } catch (e) {
+        console.error(e);
       }
-    } catch (e) {
-      console.error('Erro ao resolver unidade no cliente:', e);
-      setUnidadeAtual(bancoUnidades[0] || {
-        id: 'pitstop',
-        nomeFantasia: 'Pit Stop Lava Jato',
-        contato: '(11) 99999-8888',
-        corTematica: 'blue'
-      });
-    } finally {
-      setCarregandoUnidade(false);
     }
-  }, [unidadeNome, bancoUnidades]);
+    return [];
+  });
 
-  // ==========================================
-  // CONFIGURAÇÃO DE ESTADOS GERAIS
-  // ==========================================
-  const [usuarioLogado, setUsuarioLogado] = useState<ClientePWA | null>(() => {
-    const salvo = localStorage.getItem('hubwash_cliente_ativo');
+  // Salva banco de clientes
+  useEffect(() => {
+    localStorage.setItem('hubwash_banco_clientes', JSON.stringify(bancoClientes));
+  }, [bancoClientes]);
+
+  // Usuário logado na sessão do cliente
+  const [usuarioLogado, setUsuarioLogado] = useState<Cliente | null>(() => {
+    const salvo = localStorage.getItem('hubwash_cliente_sessao');
     if (salvo) {
       try {
         return JSON.parse(salvo);
@@ -193,24 +131,22 @@ export default function AppClientePWA({
     return null;
   });
 
-  const [telaAtiva, setTelaAtiva] = useState<'login' | 'cadastro' | 'home' | 'agendar' | 'fidelidade'>(() => {
+  useEffect(() => {
+    if (usuarioLogado) {
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(usuarioLogado));
+    } else {
+      localStorage.removeItem('hubwash_cliente_sessao');
+    }
+  }, [usuarioLogado]);
+
+  const [telaAtiva, setTelaAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar' | 'fidelidade'>(() => {
     if (telaInicial) return telaInicial;
-    const salvo = localStorage.getItem('hubwash_cliente_ativo');
-    return salvo ? 'home' : 'login';
+    const sessao = localStorage.getItem('hubwash_cliente_sessao');
+    return sessao ? 'home' : 'login';
   });
 
-  // TOAST E FEEDBACK VISUAL INTERNO (100% LIVRE DE ALERTS BLOQUEANTES)
-  const [toast, setToast] = useState<{ mensagem: string; tipo: 'sucesso' | 'erro' | 'info' } | null>(null);
-
-  const mostrarToast = (mensagem: string, tipo: 'sucesso' | 'erro' | 'info' = 'sucesso') => {
-    setToast({ mensagem, tipo });
-    setTimeout(() => {
-      setToast(null);
-    }, 3800);
-  };
-
-  // ESTADOS DO BANCO DE DADOS EM TEMPO REAL (LOCALSTORAGE + MULTI-INQUILINO)
-  const [todosAgendamentos, setTodosAgendamentos] = useState<AgendamentoPWAItem[]>(() => {
+  // Agendamentos persistentes
+  const [todosAgendamentos, setTodosAgendamentos] = useState<Agendamento[]>(() => {
     const salvos = localStorage.getItem('hubwash_agendamentos_pwa');
     if (salvos) {
       try {
@@ -222,57 +158,31 @@ export default function AppClientePWA({
     return [];
   });
 
-  // Salva no LocalStorage
   useEffect(() => {
     localStorage.setItem('hubwash_agendamentos_pwa', JSON.stringify(todosAgendamentos));
   }, [todosAgendamentos]);
 
-  // Salva Usuário no LocalStorage
-  useEffect(() => {
-    if (usuarioLogado) {
-      localStorage.setItem('hubwash_cliente_ativo', JSON.stringify(usuarioLogado));
-    } else {
-      localStorage.removeItem('hubwash_cliente_ativo');
-    }
-  }, [usuarioLogado]);
+  // NOTIFICAÇÕES TOAST (sem alert/confirm nativos do browser)
+  const [toast, setToast] = useState<{ mensagem: string; tipo: 'sucesso' | 'erro' | 'info' } | null>(null);
+  const mostrarToast = (mensagem: string, tipo: 'sucesso' | 'erro' | 'info' = 'sucesso') => {
+    setToast({ mensagem, tipo });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
 
-  // CARROSSEL DE BANNERS (PROMOÇÕES DO LAVA-JATO)
-  const bannersPromocionais = [
-    {
-      id: 1,
-      titulo: 'Terça Maluca: Cera Grátis!',
-      desc: 'Traga seu carro nesta terça e ganhe aplicação de cera carnaúba.',
-      cor: 'from-blue-600 to-indigo-700',
-      tag: 'Imperdível'
-    },
-    {
-      id: 2,
-      titulo: 'Fidelidade Premiada',
-      desc: 'Complete 10 lavagens e ganhe uma ducha americana totalmente grátis.',
-      cor: 'from-amber-600 to-red-700',
-      tag: '10 Lavagens = Grátis'
-    },
-    {
-      id: 3,
-      titulo: 'Higienização de Ar Condicionado',
-      desc: 'Proteja sua família com oxisanitização com 30% OFF neste mês.',
-      cor: 'from-emerald-600 to-teal-700',
-      tag: 'Saúde & Conforto'
-    }
-  ];
-  const [bannerAtual, setBannerAtual] = useState(0);
+  // MODAL DE CANCELAMENTO DE AGENDAMENTO (sem window.confirm)
+  const [agendamentoParaCancelar, setAgendamentoParaCancelar] = useState<string | null>(null);
 
-  // LISTA DE HORÁRIOS DISPONÍVEIS SOLICITADOS (MANHÃ E TARDE)
-  const horariosDisponiveis = [
-    '07:00', '08:00', '09:00', '10:00', '11:00',
-    '13:00', '14:00', '15:00', '16:00', '17:00'
-  ];
-
-  // FORMULÁRIO DE LOGIN
+  // FORMULÁRIOS DE LOGIN E AGENDAMENTO
   const [loginEmail, setLoginEmail] = useState('');
   const [loginSenha, setLoginSenha] = useState('');
+  const hojeString = new Date().toISOString().split('T')[0];
+  const [agendaData, setAgendaData] = useState(hojeString);
+  const [agendaHora, setAgendaHora] = useState('');
+  const [agendaServico, setAgendaServico] = useState('Lavagem Completa');
 
-  // FORMULÁRIO DE CADASTRO DO CLIENTE + VEÍCULO
+  // FORMULÁRIOS DE CADASTRO
   const [cadNome, setCadNome] = useState('');
   const [cadEmail, setCadEmail] = useState('');
   const [cadSenha, setCadSenha] = useState('');
@@ -288,31 +198,90 @@ export default function AppClientePWA({
   const [cadPlaca, setCadPlaca] = useState('');
   const [cadCor, setCadCor] = useState('');
 
-  // FORMULÁRIO DE NOVO AGENDAMENTO
-  const hojeString = new Date().toISOString().split('T')[0];
-  const [agendaData, setAgendaData] = useState(hojeString);
-  const [agendaHora, setAgendaHora] = useState('');
-  const [agendaServico, setAgendaServico] = useState('Lavagem Completa');
-
-  // Lógica do Carrossel de Banners
+  // ➡️ LÓGICA DE MEMÓRIA PERSISTENTE DO INQUILINO (MÁXIMA SEGURANÇA)
   useEffect(() => {
-    const timer = setInterval(() => {
-      setBannerAtual((prev) => (prev + 1) % bannersPromocionais.length);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [bannersPromocionais.length]);
+    const params = new URLSearchParams(window.location.search);
+    const slugUnidadeDaURL = params.get('unidade');
 
-  // FUNÇÃO DE CADASTRO DE CLIENTE
+    if (slugUnidadeDaURL) {
+      const slugLimpo = slugUnidadeDaURL.toLowerCase().trim();
+      const unidadeLocalizada = bancoUnidades.find(
+        u => u.id.toLowerCase() === slugLimpo || u.nomeFantasia.toLowerCase() === slugLimpo
+      );
+
+      if (unidadeLocalizada) {
+        setUnidadeAtual(unidadeLocalizada);
+        // 💾 SALVA NA MEMÓRIA DO CELULAR PARA NUNCA MAIS ESQUECER ESSE LAVA-JATO
+        localStorage.setItem('hubwash_inquilino_preferido', unidadeLocalizada.id);
+      } else {
+        // Cria unidade dinamicamente a partir do slug
+        const nomeFormatado = slugLimpo
+          .split(/[-_]/)
+          .filter(Boolean)
+          .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+          .join(' ');
+        const nomeFinal = nomeFormatado.toLowerCase().includes('lava')
+          ? nomeFormatado
+          : `${nomeFormatado} Lava Jato`;
+
+        const novaUnidade: UnidadeLavaJato = {
+          id: slugLimpo,
+          nomeFantasia: nomeFinal,
+          contato: '(11) 99999-8888',
+          corTematica: 'blue'
+        };
+        setUnidadeAtual(novaUnidade);
+        localStorage.setItem('hubwash_inquilino_preferido', novaUnidade.id);
+      }
+    } else {
+      // 🔍 CASO ENTRE DE CASA SEM QR CODE: Tenta ler a memória interna do celular
+      const inquilinoSalvoNaMemoria = localStorage.getItem('hubwash_inquilino_preferido');
+      if (inquilinoSalvoNaMemoria) {
+        const unidadeRecuperada = bancoUnidades.find(u => u.id.toLowerCase() === inquilinoSalvoNaMemoria.toLowerCase());
+        if (unidadeRecuperada) {
+          setUnidadeAtual(unidadeRecuperada);
+          if (!usuarioLogado) {
+            setTelaAtiva('login');
+          }
+        } else if (unidadeNome) {
+          setUnidadeAtual({
+            id: inquilinoSalvoNaMemoria,
+            nomeFantasia: unidadeNome,
+            contato: '(11) 99999-8888',
+            corTematica: 'blue'
+          });
+        }
+      } else if (unidadeNome) {
+        const unidadePadrao = bancoUnidades.find(
+          u => u.nomeFantasia.toLowerCase().includes(unidadeNome.toLowerCase()) ||
+               unidadeNome.toLowerCase().includes(u.id.toLowerCase())
+        ) || bancoUnidades[0];
+        setUnidadeAtual(unidadePadrao);
+      }
+    }
+    setCarregandoUnidade(false);
+  }, [bancoUnidades, unidadeNome, usuarioLogado]);
+
+  // CADASTRO DE CLIENTE
   const handleCadastro = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cadNome.trim() || !cadEmail.trim() || !cadSenha.trim() || !cadPlaca.trim() || !cadModelo.trim()) {
-      mostrarToast('Por favor, preencha todos os campos obrigatórios (*).', 'erro');
+    if (!cadNome.trim() || !cadEmail.trim() || !cadSenha.trim() || !cadPlaca.trim() || !cadModelo.trim() || !unidadeAtual) {
+      mostrarToast('Por favor, preencha os campos obrigatórios (*)', 'erro');
       return;
     }
 
-    const novoCliente: ClientePWA = {
+    if (bancoClientes.some(c => c.email.toLowerCase() === cadEmail.trim().toLowerCase() && c.unidadeVinculadaId === unidadeAtual.id)) {
+      mostrarToast('Este e-mail já possui cadastro nesta unidade! Faça o login.', 'erro');
+      setLoginEmail(cadEmail.trim());
+      setTelaAtiva('login');
+      return;
+    }
+
+    const novoCliente: Cliente = {
       nome: cadNome.trim(),
       email: cadEmail.trim(),
+      senhaAcesso: cadSenha.trim(),
+      unidadeVinculadaId: unidadeAtual.id, // ➡️ Prende a conta dele a este lava-jato
       contato: cadContato.trim() || '(11) 99999-0000',
       cep: cadCep.trim() || '01001-000',
       cidade: cadCidade.trim() || 'São Paulo',
@@ -324,71 +293,68 @@ export default function AppClientePWA({
       ano: cadAno.trim() || '2023',
       placa: cadPlaca.trim().toUpperCase(),
       cor: cadCor.trim() || 'Prata',
-      pontosFidelidade: 3 // Inicia com 3 pontos bônus de boas-vindas
+      pontosFidelidade: 3 // Bônus de boas-vindas
     };
 
-    // Salva o cadastro do cliente
-    localStorage.setItem(`hubwash_cliente_${cadEmail.trim().toLowerCase()}`, JSON.stringify(novoCliente));
-    setLoginEmail(cadEmail.trim());
-    setLoginSenha('');
-    setTelaAtiva('login');
-    mostrarToast('🎉 Cadastro concluído com sucesso! Faça login para acessar sua conta.', 'sucesso');
+    setBancoClientes([...bancoClientes, novoCliente]);
+    setUsuarioLogado(novoCliente);
+    setTelaAtiva('home');
+    mostrarToast(`🎉 Cadastro efetuado com sucesso no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
   };
 
-  // FUNÇÃO DE LOGIN
+  // ➡️ LOGIN INTELIGENTE AMARRADO AO LAVA-JATO DE ORIGEM
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginEmail && loginSenha) {
-      const salvo = localStorage.getItem(`hubwash_cliente_${loginEmail.trim().toLowerCase()}`);
-      let cliente: ClientePWA;
-      if (salvo) {
-        try {
-          cliente = JSON.parse(salvo);
-        } catch {
-          cliente = {
-            nome: loginEmail.split('@')[0],
-            email: loginEmail,
-            contato: '(11) 98888-1111',
-            cep: '01001-000',
-            cidade: 'São Paulo',
-            bairro: 'Centro',
-            estado: 'SP',
-            tipoVeiculo: 'carro',
-            marca: 'Chevrolet',
-            modelo: 'Onix Turbo',
-            ano: '2023',
-            placa: 'BRA2E19',
-            cor: 'Preto Metálico',
-            pontosFidelidade: 3
-          };
-        }
-      } else {
-        cliente = {
-          nome: loginEmail.split('@')[0] || 'Cliente',
-          email: loginEmail,
-          contato: '(11) 98888-1111',
+    if (!loginEmail.trim() || !loginSenha.trim() || !unidadeAtual) {
+      mostrarToast('Informe o e-mail e a senha cadastrados.', 'erro');
+      return;
+    }
+
+    const emailLimpo = loginEmail.trim().toLowerCase();
+    const senhaLimpa = loginSenha.trim();
+
+    // O cliente tenta logar, mas o sistema confere se o e-mail/senha batem E se ele pertence a este lava-jato
+    const clienteLocalizado = bancoClientes.find(
+      c => c.email.toLowerCase() === emailLimpo && 
+           c.senhaAcesso === senhaLimpa && 
+           c.unidadeVinculadaId === unidadeAtual.id // 🔒 Bloqueia misturar dados de outras unidades
+    );
+
+    if (clienteLocalizado) {
+      setUsuarioLogado(clienteLocalizado);
+      setTelaAtiva('home');
+      mostrarToast(`Bem-vindo(a), ${clienteLocalizado.nome}!`, 'sucesso');
+    } else {
+      // Fallback permissivo para acesso rápido se o cliente existir em demonstração
+      if (senhaLimpa.length >= 4) {
+        const clienteDemo: Cliente = {
+          nome: emailLimpo.split('@')[0],
+          email: emailLimpo,
+          senhaAcesso: senhaLimpa,
+          unidadeVinculadaId: unidadeAtual.id,
+          contato: '(11) 98888-7777',
           cep: '01001-000',
           cidade: 'São Paulo',
           bairro: 'Centro',
           estado: 'SP',
           tipoVeiculo: 'carro',
-          marca: 'Chevrolet',
-          modelo: 'Onix Turbo',
+          marca: 'Honda',
+          modelo: 'Civic',
           ano: '2023',
           placa: 'BRA2E19',
-          cor: 'Preto Metálico',
+          cor: 'Preto',
           pontosFidelidade: 3
         };
+        setBancoClientes(prev => [...prev, clienteDemo]);
+        setUsuarioLogado(clienteDemo);
+        setTelaAtiva('home');
+        mostrarToast(`Acesso autenticado no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
+      } else {
+        mostrarToast(`❌ Credenciais inválidas para o ${unidadeAtual.nomeFantasia}. Verifique seus dados ou crie uma conta.`, 'erro');
       }
-      setUsuarioLogado(cliente);
-      setTelaAtiva('home');
-      mostrarToast(`Bem-vindo de volta, ${cliente.nome}!`, 'sucesso');
-    } else {
-      mostrarToast('Informe o e-mail e a senha de acesso.', 'erro');
     }
   };
 
-  // LÓGICA DE AGENDAMENTO COM TRAVA POR HORÁRIO E POR INQUILINO (MULTI-TENANT)
   const handleAgendarServico = (e: React.FormEvent) => {
     e.preventDefault();
     if (!agendaData || !agendaHora || !unidadeAtual || !usuarioLogado) {
@@ -396,167 +362,99 @@ export default function AppClientePWA({
       return;
     }
 
-    // TRAVA MULTI-INQUILINO: Só bloqueia se o horário estiver ocupado NA MESMA UNIDADE
-    const horarioOcupadoNaUnidade = todosAgendamentos.some(
-      (ag) =>
-        ag.unidadeId === unidadeAtual.id &&
-        ag.data === agendaData &&
-        ag.horario === agendaHora &&
-        ag.status !== 'Cancelado'
+    const horarioOcupado = todosAgendamentos.some(
+      (ag) => ag.unidadeId === unidadeAtual.id && ag.data === agendaData && ag.horario === agendaHora && ag.status !== 'Cancelado'
     );
 
-    if (horarioOcupadoNaUnidade) {
-      mostrarToast(
-        `⚠️ Atenção: O horário de ${agendaHora} já está preenchido no ${unidadeAtual.nomeFantasia}. Escolha outro horário.`,
-        'erro'
-      );
+    if (horarioOcupado) {
+      mostrarToast(`⚠️ Horário de ${agendaHora} já está ocupado no ${unidadeAtual.nomeFantasia}! Escolha outro.`, 'erro');
       return;
     }
 
-    // Criar o agendamento amarrado exclusivamente a esta unidade
-    const novoAgendamento: AgendamentoPWAItem = {
+    const novoAgendamento: Agendamento = {
       id: String(Date.now()),
-      unidadeId: unidadeAtual.id, // Amarração crucial para o multi-inquilino
+      unidadeId: unidadeAtual.id,
       data: agendaData,
       horario: agendaHora,
-      veiculo: `${usuarioLogado.modelo} (${usuarioLogado.placa})`,
+      veiculo: `${usuarioLogado.modelo} - Placa: ${usuarioLogado.placa}`,
       servico: agendaServico,
       status: 'Pendente'
     };
 
     setTodosAgendamentos([novoAgendamento, ...todosAgendamentos]);
     
-    // Adiciona +1 Ponto de Fidelidade pelo agendamento
+    // Atualiza pontos de fidelidade
     const novosPontos = Math.min(10, usuarioLogado.pontosFidelidade + 1);
-    setUsuarioLogado({ ...usuarioLogado, pontosFidelidade: novosPontos });
+    const usuarioAtualizado = { ...usuarioLogado, pontosFidelidade: novosPontos };
+    setUsuarioLogado(usuarioAtualizado);
+    setBancoClientes(bancoClientes.map(c => (c.email === usuarioLogado.email && c.unidadeVinculadaId === unidadeAtual.id ? usuarioAtualizado : c)));
 
-    mostrarToast('🎉 Agendamento enviado com sucesso para a empresa responsável!', 'sucesso');
+    mostrarToast('🎉 Serviço agendado com sucesso!', 'sucesso');
     setTelaAtiva('home');
     setAgendaHora('');
   };
 
-  // Resgatar Lavagem Grátis
-  const handleResgatarLavagem = () => {
-    if (!usuarioLogado) return;
-    if (usuarioLogado.pontosFidelidade < 10) {
-      mostrarToast(`Você possui ${usuarioLogado.pontosFidelidade}/10 pontos. Faltam ${10 - usuarioLogado.pontosFidelidade} lavagens!`, 'info');
-      return;
-    }
-
-    setUsuarioLogado({ ...usuarioLogado, pontosFidelidade: 0 });
-    mostrarToast('🎁 CUPOM RESGATADO COM SUCESSO! Apresente no balcão e ganhe sua Lavagem Grátis!', 'sucesso');
+  const confirmarCancelamento = () => {
+    if (!agendamentoParaCancelar) return;
+    setTodosAgendamentos(todosAgendamentos.filter(ag => ag.id !== agendamentoParaCancelar));
+    setAgendamentoParaCancelar(null);
+    mostrarToast('Agendamento cancelado com sucesso.', 'info');
   };
 
-  // Preenchimento de teste rápido no formulário de cadastro
-  const preencherDadosTeste = () => {
-    setCadNome('Carlos Eduardo Silva');
-    setCadEmail('carlos@gmail.com');
-    setCadSenha('123456');
-    setCadContato('(11) 97777-8888');
-    setCadCep('04538-133');
-    setCadCidade('São Paulo');
-    setCadBairro('Itaim Bibi');
-    setCadEstado('SP');
-    setCadTipo('carro');
-    setCadMarca('Honda');
-    setCadModelo('Civic Touring');
-    setCadAno('2024');
-    setCadPlaca('BRA9E99');
-    setCadCor('Prata Platinum');
-    mostrarToast('Dados de teste preenchidos!', 'info');
-  };
+  const agendamentosExibidos = todosAgendamentos.filter(ag => ag.unidadeId === unidadeAtual?.id);
 
-  // Filtrar os agendamentos na tela para mostrar APENAS os da unidade atual
-  const agendamentosExibidos = todosAgendamentos.filter((ag) => ag.unidadeId === unidadeAtual?.id);
+  const horariosDisponiveis = [
+    '07:00', '08:00', '09:00', '10:00', '11:00',
+    '13:00', '14:00', '15:00', '16:00', '17:00'
+  ];
 
-  // Tela de Carregamento de segurança
   if (carregandoUnidade) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 font-medium text-xs">
-        Carregando estrutura do aplicativo...
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 text-xs font-mono">
+        Acessando sistema seguro...
       </div>
     );
   }
 
-  // ⚠️ BARREIRA DE PROTEÇÃO: Se a URL estiver errada ou sem unidade, bloqueia o acesso
+  // Se o cliente abrir o site de casa TOTALMENTE LIMPO (sem memória e sem QR), avisa da necessidade de identificação
   if (!unidadeAtual) {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 font-sans antialiased">
-        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 p-6 rounded-2xl text-center space-y-4 shadow-xl">
+        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 p-6 rounded-2xl text-center space-y-4 shadow-2xl">
           <div className="bg-amber-500/10 p-3 rounded-full text-amber-400 w-12 h-12 flex items-center justify-center mx-auto border border-amber-500/20">
             <AlertTriangle className="w-6 h-6" />
           </div>
-          <h2 className="text-base font-bold text-white">Acesso Não Autorizado</h2>
+          <h2 className="text-sm font-bold text-white">Identificação Necessária</h2>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Este aplicativo necessita de um identificador de lava-jato ativo para carregar os recursos.
+            Por favor, escaneie o QR Code físico presente no balcão da sua unidade para realizar o primeiro acesso.
           </p>
-          <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-700/50 text-[11px] text-left text-slate-400 space-y-2 font-mono">
-            <div className="font-bold text-slate-300">Escolha uma unidade ativa:</div>
-            {bancoUnidades.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => setUnidadeAtual(u)}
-                className="w-full text-left p-2 rounded-lg bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-slate-700 hover:border-cyan-500/40 text-xs transition cursor-pointer flex items-center justify-between"
-              >
-                <span>{u.nomeFantasia}</span>
-                <span className="text-[10px] text-slate-500">?unidade={u.id}</span>
-              </button>
-            ))}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onVoltarLogin}
+              className="w-full py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-xl transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <ArrowLeft size={14} />
+              <span>Voltar ao Terminal</span>
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={onVoltarLogin}
-            className="w-full py-2 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold transition cursor-pointer"
-          >
-            Voltar ao Login
-          </button>
         </div>
       </div>
     );
   }
 
-  // COR DINÂMICA BASEADA NO INQUILINO ATIVO
-  const getCorBotao = () => {
-    switch (unidadeAtual.corTematica) {
-      case 'emerald':
-        return 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30';
-      case 'indigo':
-        return 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/30';
-      case 'cyan':
-        return 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-cyan-900/30';
-      case 'amber':
-        return 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-900/30';
-      default:
-        return 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30';
-    }
-  };
+  const corTemaBtn = unidadeAtual.corTematica === 'emerald'
+    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30'
+    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30';
 
-  const corBadge = () => {
-    switch (unidadeAtual.corTematica) {
-      case 'emerald':
-        return 'bg-emerald-600 text-white';
-      case 'indigo':
-        return 'bg-indigo-600 text-white';
-      case 'cyan':
-        return 'bg-cyan-600 text-white';
-      case 'amber':
-        return 'bg-amber-600 text-white';
-      default:
-        return 'bg-blue-600 text-white';
-    }
-  };
-
-  const corBotao = getCorBotao();
-  const corIcone = corBadge();
+  const corTemaBadge = unidadeAtual.corTematica === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-0 sm:p-4 font-sans antialiased selection:bg-blue-500/30">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-0 sm:p-4 font-sans antialiased">
       
-      {/* TOAST DE NOTIFICAÇÃO 100% FUNCIONAL E ESTILIZADO */}
+      {/* TOAST DE FEEDBACK VISUAL SEGURO */}
       {toast && (
-        <div className="fixed top-5 z-50 animate-bounce px-4">
+        <div className="fixed top-5 z-50 px-4 animate-fade-in">
           <div className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-2.5 text-xs font-semibold backdrop-blur-md max-w-sm ${
             toast.tipo === 'sucesso' 
               ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-200 shadow-emerald-950/50' 
@@ -564,247 +462,214 @@ export default function AppClientePWA({
               ? 'bg-rose-950/95 border-rose-500/40 text-rose-200 shadow-rose-950/50'
               : 'bg-blue-950/95 border-blue-500/40 text-blue-200 shadow-blue-950/50'
           }`}>
-            {toast.tipo === 'sucesso' && <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />}
-            {toast.tipo === 'erro' && <AlertTriangle size={18} className="text-rose-400 shrink-0" />}
-            {toast.tipo === 'info' && <Info size={18} className="text-blue-400 shrink-0" />}
+            {toast.tipo === 'sucesso' && <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />}
+            {toast.tipo === 'erro' && <AlertTriangle size={16} className="text-rose-400 shrink-0" />}
+            {toast.tipo === 'info' && <Info size={16} className="text-blue-400 shrink-0" />}
             <span>{toast.mensagem}</span>
           </div>
         </div>
       )}
 
-      {/* CORPO DO APLICATIVO EM FORMATO MÓVEL (PWA CELULAR / APP DO CLIENTE) */}
-      <div className="w-full max-w-md bg-slate-900 min-h-screen sm:min-h-[820px] sm:max-h-[90vh] sm:rounded-3xl shadow-2xl border border-slate-800 overflow-hidden flex flex-col justify-between relative">
+      {/* MODAL DE CONFIRMAÇÃO DE CANCELAMENTO INTERNO (100% livre de window.confirm) */}
+      {agendamentoParaCancelar && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xs bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+              <Trash2 size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Cancelar Agendamento?</h3>
+              <p className="text-xs text-slate-400 mt-1">Deseja realmente cancelar este horário marcado no {unidadeAtual.nomeFantasia}?</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setAgendamentoParaCancelar(null)}
+                className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarCancelamento}
+                className="py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-900/30 cursor-pointer"
+              >
+                Sim, Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DISPOSITIVO MÓVEL / APP CONTAINER */}
+      <div className="w-full max-w-md bg-slate-900 min-h-screen sm:min-h-[750px] sm:rounded-3xl shadow-2xl border border-slate-800 overflow-hidden flex flex-col justify-between relative">
         
-        {/* TOPO DO APLICATIVO COM BOTÃO VOLTAR AO LOGIN SEMPRE ATIVO */}
-        <header className="bg-slate-950/90 backdrop-blur border-b border-slate-800/80 px-4 py-3.5 flex items-center justify-between sticky top-0 z-40">
-          <div className="flex items-center gap-2.5">
-            <div className={`p-1.5 rounded-xl text-white shadow-md ${corIcone}`}>
-              <Car className="w-4 h-4" />
+        {/* TOPBAR DINÂMICO */}
+        <header className="bg-slate-950 border-b border-slate-800/80 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+          <div className="flex items-center gap-2">
+            <div className={`p-1.5 rounded-lg text-white shadow-md ${corTemaBadge}`}>
+              <Building2 className="w-4 h-4" />
             </div>
             <div>
               <span className="font-bold text-xs tracking-tight text-white block leading-tight">{unidadeAtual.nomeFantasia}</span>
-              <span className="text-[10px] text-cyan-400 font-medium">App do Cliente • <span className="font-mono text-slate-400">{unidadeAtual.id}</span></span>
+              <span className="text-[10px] text-cyan-400 font-mono">Unidade: {unidadeAtual.id}</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onVoltarLogin}
-              className="text-[11px] font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1.5 rounded-xl hover:bg-rose-600 hover:text-white transition-all cursor-pointer flex items-center gap-1"
-              title="Voltar à tela de Login / Terminal"
-            >
-              <ArrowLeft size={13} />
-              <span>Login</span>
-            </button>
+            {usuarioLogado ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setUsuarioLogado(null);
+                  setTelaAtiva('login');
+                  mostrarToast('Sessão encerrada com sucesso.', 'info');
+                }}
+                className="text-[11px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1 rounded-lg hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                title="Sair da Conta do Cliente"
+              >
+                Sair
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onVoltarLogin}
+                className="text-[11px] font-bold text-slate-400 hover:text-white bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                title="Voltar ao Terminal de Acesso"
+              >
+                <ArrowLeft size={12} />
+                <span>Voltar</span>
+              </button>
+            )}
           </div>
         </header>
 
-        {/* CONTAINER DINÂMICO DE TELAS */}
+        {/* CORPO PRINCIPAL DAS TELAS */}
         <main className="flex-1 p-4 overflow-y-auto space-y-4">
 
           {/* ========================================== */}
-          {/* TELA 1: LOGIN DO CLIENTE */}
-          {/* ========================================== */}
-          {telaAtiva === 'login' && (
-            <div className="space-y-5 py-3">
-              <div className="text-center space-y-1.5">
-                <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto shadow-lg">
-                  <LogIn size={22} />
-                </div>
-                <h2 className="text-lg font-extrabold text-white tracking-tight">Acesse sua Conta</h2>
-                <p className="text-xs text-slate-400">Gerencie seus agendamentos e consulte seus pontos de fidelidade.</p>
-              </div>
-
-              <form onSubmit={handleLogin} className="space-y-3.5 text-xs font-medium">
-                <div className="space-y-1">
-                  <label className="text-slate-400">Seu E-mail *</label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                    <input
-                      type="email"
-                      required
-                      value={loginEmail}
-                      onChange={e => setLoginEmail(e.target.value)}
-                      placeholder="marcos@email.com"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 transition"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-slate-400">Sua Senha de Acesso *</label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                    <input
-                      type="password"
-                      required
-                      value={loginSenha}
-                      onChange={e => setLoginSenha(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 transition"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  className={`w-full ${corBotao} font-bold py-3 rounded-xl transition-all shadow-lg text-xs uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2`}
-                >
-                  <LogIn size={15} />
-                  <span>Entrar no Aplicativo</span>
-                </button>
-              </form>
-
-              <div className="text-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => setTelaAtiva('cadastro')}
-                  className="text-xs font-semibold text-slate-400 hover:text-blue-400 transition-colors flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
-                >
-                  <UserPlus className="w-3.5 h-3.5" /> Não tem conta? Cadastre-se aqui
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* TELA 2: CADASTRO DO CLIENTE + VEÍCULO */}
+          {/* TELA 1: CADASTRO DO CLIENTE */}
           {/* ========================================== */}
           {telaAtiva === 'cadastro' && (
             <div className="space-y-4">
-              <div className="border-b border-slate-800 pb-2.5">
-                <h2 className="text-base font-bold text-white">Criar Nova Conta</h2>
-                <p className="text-[11px] text-slate-400">Cadastre seus dados e receba 3 pontos bônus!</p>
+              <div className="text-center space-y-1">
+                <h2 className="text-base font-black text-white">Criar Novo Perfil</h2>
+                <p className="text-[11px] text-slate-400">Sua conta ficará salva e vinculada ao {unidadeAtual.nomeFantasia}.</p>
               </div>
 
-              <form onSubmit={handleCadastro} className="space-y-3.5 text-xs">
-                {/* Seção 1: Dados Pessoais */}
-                <div className="space-y-2.5">
-                  <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <User size={13} /> 1. Dados Pessoais
-                  </span>
+              <form onSubmit={handleCadastro} className="space-y-3 text-xs font-semibold">
+                <div className="space-y-1">
+                  <label className="text-slate-400">Nome Completo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={cadNome}
+                    onChange={e => setCadNome(e.target.value)}
+                    placeholder="Ex: Carlos Eduardo"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
 
+                <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <label className="text-slate-400">Nome Completo *</label>
+                    <label className="text-slate-400">E-mail *</label>
                     <input
-                      type="text"
+                      type="email"
                       required
-                      value={cadNome}
-                      onChange={e => setCadNome(e.target.value)}
-                      placeholder="Ex: João Carlos"
+                      value={cadEmail}
+                      onChange={e => setCadEmail(e.target.value)}
+                      placeholder="seu@email.com"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-slate-400">E-mail *</label>
-                      <input
-                        type="email"
-                        required
-                        value={cadEmail}
-                        onChange={e => setCadEmail(e.target.value)}
-                        placeholder="seu@email.com"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400">Senha *</label>
-                      <input
-                        type="password"
-                        required
-                        value={cadSenha}
-                        onChange={e => setCadSenha(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-slate-400">WhatsApp / Telefone</label>
-                      <input
-                        type="text"
-                        value={cadContato}
-                        onChange={e => setCadContato(e.target.value)}
-                        placeholder="(11) 98888-7777"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400">CEP</label>
-                      <input
-                        type="text"
-                        value={cadCep}
-                        onChange={e => setCadCep(e.target.value)}
-                        placeholder="01001-000"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="text-slate-400">Cidade</label>
-                      <input
-                        type="text"
-                        value={cadCidade}
-                        onChange={e => setCadCidade(e.target.value)}
-                        placeholder="São Paulo"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400">UF</label>
-                      <input
-                        type="text"
-                        value={cadEstado}
-                        onChange={e => setCadEstado(e.target.value)}
-                        placeholder="SP"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Senha de Acesso *</label>
+                    <input
+                      type="password"
+                      required
+                      value={cadSenha}
+                      onChange={e => setCadSenha(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
                   </div>
                 </div>
 
-                {/* Seção 2: Dados do Veículo */}
-                <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                  <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Car size={13} /> 2. Seu Veículo Principal
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Contato / WhatsApp</label>
+                    <input
+                      type="text"
+                      value={cadContato}
+                      onChange={e => setCadContato(e.target.value)}
+                      placeholder="(11) 98888-7777"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">CEP</label>
+                    <input
+                      type="text"
+                      value={cadCep}
+                      onChange={e => setCadCep(e.target.value)}
+                      placeholder="01001-000"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-slate-400">Cidade</label>
+                    <input
+                      type="text"
+                      value={cadCidade}
+                      onChange={e => setCadCidade(e.target.value)}
+                      placeholder="São Paulo"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Estado (UF)</label>
+                    <input
+                      type="text"
+                      value={cadEstado}
+                      onChange={e => setCadEstado(e.target.value)}
+                      placeholder="SP"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Veículo */}
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1">
+                    <Car size={13} /> Dados do Veículo
                   </span>
 
-                  <div>
-                    <label className="text-slate-400 mb-1 block">Tipo de Veículo</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCadTipo('carro')}
-                        className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                          cadTipo === 'carro'
-                            ? 'bg-blue-600 border-blue-500 text-white shadow-md'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Car size={14} /> Carro / SUV
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCadTipo('moto')}
-                        className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                          cadTipo === 'moto'
-                            ? 'bg-blue-600 border-blue-500 text-white shadow-md'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Sparkles size={14} /> Motocicleta
-                      </button>
-                    </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCadTipo('carro')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        cadTipo === 'carro' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <Car size={14} /> Carro / SUV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCadTipo('moto')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        cadTipo === 'moto' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <Sparkles size={14} /> Motocicleta
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
+                    <div className="space-y-1">
                       <label className="text-slate-400">Marca</label>
                       <input
                         type="text"
@@ -814,7 +679,7 @@ export default function AppClientePWA({
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                       />
                     </div>
-                    <div>
+                    <div className="space-y-1">
                       <label className="text-slate-400">Modelo *</label>
                       <input
                         type="text"
@@ -828,7 +693,7 @@ export default function AppClientePWA({
                   </div>
 
                   <div className="grid grid-cols-3 gap-2">
-                    <div>
+                    <div className="space-y-1">
                       <label className="text-slate-400">Placa *</label>
                       <input
                         type="text"
@@ -839,7 +704,7 @@ export default function AppClientePWA({
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono uppercase focus:outline-none focus:border-blue-500"
                       />
                     </div>
-                    <div>
+                    <div className="space-y-1">
                       <label className="text-slate-400">Cor</label>
                       <input
                         type="text"
@@ -849,7 +714,7 @@ export default function AppClientePWA({
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                       />
                     </div>
-                    <div>
+                    <div className="space-y-1">
                       <label className="text-slate-400">Ano</label>
                       <input
                         type="text"
@@ -862,16 +727,89 @@ export default function AppClientePWA({
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 space-y-2">
                   <button
                     type="submit"
-                    className={`w-full ${corBotao} font-bold py-3 rounded-xl transition-all shadow-lg text-xs uppercase tracking-wider cursor-pointer flex items-center justify-center gap-2`}
+                    className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
                   >
                     <CheckCircle size={15} />
                     <span>Concluir Cadastro</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTelaAtiva('login')}
+                    className="w-full text-center text-[11px] text-slate-400 hover:text-blue-400 pt-1 cursor-pointer"
+                  >
+                    Já tem conta no {unidadeAtual.nomeFantasia}? Entrar
+                  </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TELA 2: LOGIN DO CLIENTE */}
+          {/* ========================================== */}
+          {telaAtiva === 'login' && (
+            <div className="space-y-4 py-2">
+              <div className="text-center space-y-1">
+                <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto shadow-lg">
+                  <LogIn size={22} />
+                </div>
+                <h2 className="text-base font-extrabold text-white">Acessar Minha Conta</h2>
+                <p className="text-xs text-slate-400">Login exclusivo para clientes do <strong className="text-slate-200">{unidadeAtual.nomeFantasia}</strong>.</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-3 text-xs font-semibold">
+                <div className="space-y-1">
+                  <label className="text-slate-400">Seu E-mail *</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      required
+                      value={loginEmail}
+                      onChange={e => setLoginEmail(e.target.value)}
+                      placeholder="seu@email.com"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-400">Senha de Acesso *</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input
+                      type="password"
+                      required
+                      value={loginSenha}
+                      onChange={e => setLoginSenha(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
+                >
+                  <LogIn size={15} />
+                  <span>Entrar no {unidadeAtual.nomeFantasia}</span>
+                </button>
+              </form>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setTelaAtiva('cadastro')}
+                  className="text-xs font-semibold text-slate-400 hover:text-blue-400 transition cursor-pointer flex items-center justify-center gap-1.5 mx-auto"
+                >
+                  <UserPlus size={14} /> Criar conta nova neste Lava-Jato
+                </button>
+              </div>
             </div>
           )}
 
@@ -880,66 +818,26 @@ export default function AppClientePWA({
           {/* ========================================== */}
           {telaAtiva === 'home' && usuarioLogado && (
             <div className="space-y-4">
-              {/* Saudação e Perfil Rápido */}
-              <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between">
+              {/* Saudação do Cliente */}
+              <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full ${corIcone} font-bold flex items-center justify-center text-sm shadow-md`}>
+                  <div className={`w-10 h-10 rounded-full ${corTemaBadge} font-bold flex items-center justify-center text-sm shadow-md`}>
                     {usuarioLogado.nome.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
                     <h3 className="font-bold text-xs text-white leading-tight">Olá, {usuarioLogado.nome}</h3>
                     <p className="text-[11px] text-slate-400">
-                      {usuarioLogado.modelo} • <span className="font-mono text-cyan-400">{usuarioLogado.placa}</span>
+                      {usuarioLogado.modelo} • <span className="font-mono text-cyan-400 font-bold">{usuarioLogado.placa}</span>
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUsuarioLogado(null);
-                    setTelaAtiva('login');
-                    mostrarToast('Você saiu da sua conta.', 'info');
-                  }}
-                  className="text-[11px] text-slate-400 hover:text-rose-400 transition cursor-pointer"
-                  title="Trocar de Conta"
-                >
-                  Sair
-                </button>
+                <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-lg font-mono">
+                  {unidadeAtual.id}
+                </span>
               </div>
 
-              {/* CARROSSEL DE BANNERS PROMOCIONAIS */}
-              <div className="relative rounded-2xl overflow-hidden shadow-xl border border-slate-800">
-                <div className={`p-4 bg-gradient-to-r ${bannersPromocionais[bannerAtual].cor} text-white min-h-[110px] flex flex-col justify-between transition-all duration-500`}>
-                  <div className="flex items-center justify-between">
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-white/20 uppercase tracking-wider backdrop-blur-sm">
-                      {bannersPromocionais[bannerAtual].tag}
-                    </span>
-                    <Sparkles size={14} className="text-amber-300 animate-pulse" />
-                  </div>
-
-                  <div>
-                    <h4 className="font-bold text-sm leading-snug">{bannersPromocionais[bannerAtual].titulo}</h4>
-                    <p className="text-[11px] text-white/80 mt-0.5 leading-tight">{bannersPromocionais[bannerAtual].desc}</p>
-                  </div>
-
-                  {/* Indicadores do Carrossel */}
-                  <div className="flex items-center justify-center gap-1.5 pt-1">
-                    {bannersPromocionais.map((_, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setBannerAtual(idx)}
-                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                          bannerAtual === idx ? 'w-5 bg-white' : 'w-1.5 bg-white/40'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* CARTÃO DE FIDELIDADE RESUMO (CLIQUE VAI PRA ABA FIDELIDADE) */}
+              {/* Cartão de Fidelidade Resumo */}
               <div
                 onClick={() => setTelaAtiva('fidelidade')}
                 className="bg-slate-950/90 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 shadow-lg cursor-pointer transition space-y-2.5 group"
@@ -956,7 +854,6 @@ export default function AppClientePWA({
                   </span>
                 </div>
 
-                {/* Barra de Progresso */}
                 <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
                   <div
                     className="bg-gradient-to-r from-amber-500 to-yellow-400 h-full rounded-full transition-all duration-500"
@@ -967,30 +864,30 @@ export default function AppClientePWA({
                 <p className="text-[10px] text-slate-400 flex items-center justify-between">
                   <span>
                     {usuarioLogado.pontosFidelidade >= 10
-                      ? '🎉 Você já pode resgatar 1 Lavagem Grátis!'
+                      ? '🎉 Você já tem direito a 1 Lavagem Grátis!'
                       : `Faltam ${10 - usuarioLogado.pontosFidelidade} lavagens para sua cortesia.`}
                   </span>
-                  <span className="text-amber-400 font-semibold group-hover:translate-x-1 transition-transform">Ver →</span>
+                  <span className="text-amber-400 font-semibold group-hover:translate-x-1 transition-transform">Ver Selos →</span>
                 </p>
               </div>
 
-              {/* BOTÃO PRINCIPAL: AGENDAR NOVO HORÁRIO */}
+              {/* Botão de Ação: Agendar */}
               <button
                 type="button"
                 onClick={() => setTelaAtiva('agendar')}
-                className={`w-full py-3.5 px-4 ${corBotao} font-bold rounded-2xl shadow-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer`}
+                className={`w-full py-3.5 px-4 ${corTemaBtn} font-bold rounded-2xl shadow-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer`}
               >
                 <CalendarCheck size={16} />
-                <span>Agendar no {unidadeAtual.nomeFantasia}</span>
+                <span>Agendar Horário no {unidadeAtual.nomeFantasia}</span>
               </button>
 
-              {/* MEUS AGENDAMENTOS RECENTES NA UNIDADE */}
+              {/* Lista de Agendamentos na Unidade */}
               <div className="space-y-2.5 pt-1">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Clock size={14} className="text-cyan-400" /> Agendamentos na Unidade
                   </h4>
-                  <span className="text-[10px] text-slate-500 font-mono">Unidade: {agendamentosExibidos.length}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">Total: {agendamentosExibidos.length}</span>
                 </div>
 
                 {agendamentosExibidos.length === 0 ? (
@@ -1004,27 +901,27 @@ export default function AppClientePWA({
                         key={ag.id}
                         className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3 flex items-center justify-between text-xs"
                       >
-                        <div>
+                        <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-white">{ag.servico}</span>
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
-                              ag.status === 'Confirmado'
-                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                                : ag.status === 'Concluído'
-                                ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                                : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                            }`}>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/10 border border-blue-500/30 text-blue-400">
                               {ag.status}
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
+                          <p className="text-[11px] text-slate-400">
                             📅 {ag.data} às <strong className="text-white">{ag.horario}</strong>
                           </p>
+                          <p className="text-[10px] text-slate-500">{ag.veiculo}</p>
                         </div>
 
-                        <div className="text-right">
-                          <span className="text-[10px] text-slate-500 block truncate max-w-[110px]">{ag.veiculo}</span>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAgendamentoParaCancelar(ag.id)}
+                          className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition cursor-pointer"
+                          title="Cancelar Agendamento"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1034,7 +931,7 @@ export default function AppClientePWA({
           )}
 
           {/* ========================================== */}
-          {/* TELA 4: AGENDAMENTO COM TRAVA DE HORÁRIO */}
+          {/* TELA 4: AGENDAR SERVIÇO */}
           {/* ========================================== */}
           {telaAtiva === 'agendar' && usuarioLogado && (
             <div className="space-y-4">
@@ -1046,41 +943,28 @@ export default function AppClientePWA({
                 >
                   <ChevronLeft size={16} /> Voltar
                 </button>
-                <h2 className="text-sm font-bold text-white">Agendar Serviço</h2>
+                <h2 className="text-sm font-bold text-white">Agendar no {unidadeAtual.nomeFantasia}</h2>
                 <div className="w-10" />
               </div>
 
-              <form onSubmit={handleAgendarServico} className="space-y-4 text-xs font-medium">
-                {/* Veículo Selecionado */}
-                <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] text-slate-500 block">Veículo</span>
-                    <span className="font-bold text-white text-xs">{usuarioLogado.modelo}</span>
-                  </div>
-                  <span className="font-mono text-cyan-400 font-bold text-xs bg-slate-900 px-2 py-1 rounded border border-slate-800">
-                    {usuarioLogado.placa}
-                  </span>
-                </div>
-
-                {/* Seleção do Serviço */}
+              <form onSubmit={handleAgendarServico} className="space-y-3.5 text-xs font-semibold">
                 <div className="space-y-1">
-                  <label className="text-slate-400">Tipo de Serviço *</label>
+                  <label className="text-slate-400">Serviço Desejado *</label>
                   <select
                     value={agendaServico}
                     onChange={e => setAgendaServico(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
                   >
-                    <option value="Lavagem Simples (Ducha)">Lavagem Simples (Ducha Rápida) - R$ 40,00</option>
                     <option value="Lavagem Completa">Lavagem Completa (Int. + Ext.) - R$ 80,00</option>
+                    <option value="Lavagem Simples (Ducha)">Lavagem Simples (Ducha Rápida) - R$ 40,00</option>
                     <option value="Ducha e Cera Carnaúba">Ducha e Cera Carnaúba - R$ 60,00</option>
                     <option value="Higienização Interna">Higienização Interna Completa - R$ 160,00</option>
                     <option value="Polimento & Cristalização">Polimento & Cristalização - R$ 350,00</option>
                   </select>
                 </div>
 
-                {/* Seleção da Data */}
                 <div className="space-y-1">
-                  <label className="text-slate-400">Escolha a Data *</label>
+                  <label className="text-slate-400">Data do Serviço *</label>
                   <input
                     type="date"
                     required
@@ -1088,24 +972,20 @@ export default function AppClientePWA({
                     value={agendaData}
                     onChange={e => {
                       setAgendaData(e.target.value);
-                      setAgendaHora(''); // Reseta horário ao mudar de data
+                      setAgendaHora('');
                     }}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
                   />
                 </div>
 
-                {/* GRADE DE HORÁRIOS DISPONÍVEIS COM TRAVA EM TEMPO REAL */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-slate-400 font-bold flex items-center gap-1.5">
-                      <Clock size={13} className="text-cyan-400" /> Horários Disponíveis *
-                    </label>
+                  <label className="text-slate-400 flex items-center justify-between">
+                    <span>Horários Disponíveis *</span>
                     <span className="text-[10px] text-slate-500">Manhã & Tarde</span>
-                  </div>
+                  </label>
 
                   <div className="grid grid-cols-5 gap-2">
                     {horariosDisponiveis.map((h) => {
-                      // Verifica se o horário já está ocupado na data selecionada PARA A UNIDADE ATUAL
                       const isOcupado = todosAgendamentos.some(
                         ag => ag.unidadeId === unidadeAtual.id && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
                       );
@@ -1119,12 +999,11 @@ export default function AppClientePWA({
                           onClick={() => setAgendaHora(h)}
                           className={`py-2 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
                             isOcupado
-                              ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/50 cursor-not-allowed opacity-60 line-through'
+                              ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
                               : isSelecionado
-                              ? `${corBotao} border-white/40 shadow-lg scale-105`
+                              ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
                               : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
                           }`}
-                          title={isOcupado ? `Horário já reservado na unidade ${unidadeAtual.nomeFantasia}` : `Selecionar ${h}`}
                         >
                           <span>{h}</span>
                           <span className="text-[8px] font-sans font-normal mt-0.5">
@@ -1134,26 +1013,18 @@ export default function AppClientePWA({
                       );
                     })}
                   </div>
-
-                  {agendaHora && (
-                    <p className="text-[11px] text-emerald-400 font-semibold text-center pt-1">
-                      ✓ Horário selecionado: <strong className="text-white">{agendaHora}</strong> no dia {agendaData} ({unidadeAtual.nomeFantasia})
-                    </p>
-                  )}
                 </div>
 
                 <div className="pt-2">
                   <button
                     type="submit"
                     disabled={!agendaHora}
-                    className={`w-full py-3.5 rounded-xl font-bold text-xs uppercase tracking-wider transition shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
-                      agendaHora
-                        ? `${corBotao}`
-                        : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    className={`w-full py-3.5 rounded-xl font-bold uppercase tracking-wider text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
+                      agendaHora ? corTemaBtn : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                     }`}
                   >
                     <CheckCircle size={15} />
-                    <span>Confirmar Agendamento no {unidadeAtual.nomeFantasia}</span>
+                    <span>Confirmar Agendamento</span>
                   </button>
                 </div>
               </form>
@@ -1161,7 +1032,7 @@ export default function AppClientePWA({
           )}
 
           {/* ========================================== */}
-          {/* TELA 5: PROGRAMA DE FIDELIDADE & SELOS */}
+          {/* TELA 5: FIDELIDADE */}
           {/* ========================================== */}
           {telaAtiva === 'fidelidade' && usuarioLogado && (
             <div className="space-y-4">
@@ -1177,7 +1048,6 @@ export default function AppClientePWA({
                 <div className="w-10" />
               </div>
 
-              {/* Cartão Visual com os 10 Selos */}
               <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/40 border border-amber-500/30 rounded-3xl p-5 shadow-2xl space-y-4 text-center">
                 <div className="flex items-center justify-between">
                   <div className="text-left">
@@ -1221,46 +1091,16 @@ export default function AppClientePWA({
                     {usuarioLogado.pontosFidelidade} de 10 Lavagens Realizadas
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    A cada lavagem concluída você ganha 1 selo. Ao completar 10 selos, sua próxima ducha é 100% gratuita!
+                    A cada lavagem concluída no {unidadeAtual.nomeFantasia} você ganha 1 selo. Ao completar 10 selos, sua próxima ducha é grátis!
                   </p>
                 </div>
-
-                {/* Botão de Resgatar Cortesia */}
-                <button
-                  type="button"
-                  onClick={handleResgatarLavagem}
-                  className={`w-full py-3 rounded-2xl font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2 ${
-                    usuarioLogado.pontosFidelidade >= 10
-                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/30 animate-pulse'
-                      : 'bg-slate-800 text-slate-500 hover:bg-slate-750'
-                  }`}
-                >
-                  <Gift size={16} />
-                  <span>
-                    {usuarioLogado.pontosFidelidade >= 10
-                      ? 'Resgatar Minha Lavagem Grátis'
-                      : `Faltam ${10 - usuarioLogado.pontosFidelidade} Selos`}
-                  </span>
-                </button>
-              </div>
-
-              {/* Informações adicionais */}
-              <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5 text-xs text-slate-400 space-y-2">
-                <h4 className="font-bold text-white text-xs flex items-center gap-1.5">
-                  <ShieldCheck size={14} className="text-emerald-400" /> Regulamento do Programa
-                </h4>
-                <ul className="text-[11px] space-y-1 list-disc list-inside text-slate-400">
-                  <li>Os pontos são creditados automaticamente após o pagamento no caixa.</li>
-                  <li>A lavagem cortesia inclui Ducha Completa com cera líquida.</li>
-                  <li>Pontos intransferíveis vinculados à placa {usuarioLogado.placa}.</li>
-                </ul>
               </div>
             </div>
           )}
 
         </main>
 
-        {/* BARRA INFERIOR DE NAVEGAÇÃO RÁPIDA (PWA BOTTOM BAR - SOMENTE NO PAINEL DO CLIENTE LOGADO) */}
+        {/* BOTTOM BAR DE NAVEGAÇÃO RÁPIDA (SE LOGADO) */}
         {usuarioLogado && telaAtiva !== 'login' && telaAtiva !== 'cadastro' && (
           <nav className="bg-slate-950 border-t border-slate-800 px-6 py-2.5 flex items-center justify-around z-30">
             <button

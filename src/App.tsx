@@ -1,11 +1,59 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  doc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy
+} from 'firebase/firestore';
 import LoginOTP from './components/LoginOTP';
 import AdminMaster from './components/AdminMaster';
 import PainelLavaJato from './components/PainelLavaJato';
 import AppClientePWA from './components/AppClientePWA';
 
+// ============================================================================
+// CONFIGURAÇÃO DO FIREBASE FIRESTORE
+// Espaço reservado para inserção das chaves oficiais do projeto Firebase Console
+// ou via variáveis de ambiente (.env)
+// ============================================================================
+export const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || ""
+};
+
+// Inicialização resiliente do Firebase
+const app = !getApps().length
+  ? initializeApp(
+      firebaseConfig.projectId
+        ? firebaseConfig
+        : {
+            apiKey: "AIzaSyDemoKeyForPreviewModeOnly12345",
+            authDomain: "hubwash-preview.firebaseapp.com",
+            projectId: "hubwash-preview",
+            storageBucket: "hubwash-preview.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:demo"
+          }
+    )
+  : getApp();
+
+export const db = getFirestore(app);
+export { collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy };
+
 // Função segura para ler parâmetros de busca na URL
+
 function getParamSafe(name: string): string | null {
   try {
     if (typeof window === 'undefined' || !window.location || !window.location.search) {
@@ -129,51 +177,3 @@ export default function App() {
             <span>Voltar ao Início</span>
           </button>
         </div>
-      </div>
-    );
-  }
-
-  // TELA DE AUTENTICAÇÃO / LOGIN OTP
-  if (!autenticado) {
-    return (
-      <LoginOTP
-        onSuccess={(role, unidadeNome, telaCliente) => {
-          setAutenticado(true);
-          if (role === 'master') {
-            setTelaAtual('master');
-          } else if (role === 'cliente') {
-            if (unidadeNome) setUnidadeSelecionada(unidadeNome);
-            if (telaCliente) setTelaClienteInicial(telaCliente);
-            setTelaAtual('cliente');
-          } else {
-            if (unidadeNome) {
-              setUnidadeSelecionada(unidadeNome);
-            }
-            setTelaAtual('lavajato');
-          }
-        }}
-      />
-    );
-  }
-
-  // TELA: APLICATIVO DO CLIENTE (PWA)
-  if (telaAtual === 'cliente') {
-    return (
-      <AppClientePWA
-        unidadeNome={unidadeSelecionada}
-        telaInicial={telaClienteInicial}
-        onVoltarLogin={() => {
-          setAutenticado(false);
-        }}
-      />
-    );
-  }
-
-  // TELA: ADMIN MASTER (HUBWASH)
-  if (telaAtual === 'master') {
-    return (
-      <AdminMaster
-        onLogout={() => {
-          setAutenticado(false);
-        }}
-        onIrParaLavaJato={(nome?: string) => {

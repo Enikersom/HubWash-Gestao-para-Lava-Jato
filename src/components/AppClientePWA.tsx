@@ -111,33 +111,71 @@ export default function AppClientePWA({
 
   // ➡️ LÓGICA CRUCIAL MULTI-INQUILINO: IDENTIFICAR A UNIDADE PELA URL OU PROPS
   useEffect(() => {
-    // 1. Pega os parâmetros contidos após a "?" na URL do navegador
-    const params = new URLSearchParams(window.location.search);
-    const slugUnidade = params.get('unidade');
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const rawSlug = params.get('unidade');
+      const slugUnidade = rawSlug ? rawSlug.trim().toLowerCase() : null;
 
-    if (slugUnidade) {
-      // 2. Procura se a unidade existe na nossa lista de inquilinos
-      const unidadeLocalizada = bancoUnidades.find(
-        (u) => u.id === slugUnidade.toLowerCase().trim()
-      );
-      if (unidadeLocalizada) {
-        setUnidadeAtual(unidadeLocalizada);
+      if (slugUnidade) {
+        // 1. Procura se a unidade existe na nossa lista de inquilinos
+        const unidadeLocalizada = bancoUnidades.find(
+          (u) => (u.id || '').trim().toLowerCase() === slugUnidade ||
+                 (u.nomeFantasia || '').trim().toLowerCase() === slugUnidade
+        );
+        if (unidadeLocalizada) {
+          setUnidadeAtual(unidadeLocalizada);
+        } else {
+          // 2. Se não estiver no banco do dispositivo móvel, cria a unidade dinamicamente
+          const nomeFormatado = slugUnidade
+            .split(/[-_]/)
+            .filter(Boolean)
+            .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+            .join(' ');
+
+          const nomeFinal = unidadeNome || (nomeFormatado.toLowerCase().includes('lava')
+            ? nomeFormatado
+            : `${nomeFormatado} Lava Jato`);
+
+          const novaUnidade: UnidadeLavaJato = {
+            id: slugUnidade,
+            nomeFantasia: nomeFinal,
+            contato: '(11) 99999-8888',
+            corTematica: 'blue'
+          };
+          setUnidadeAtual(novaUnidade);
+        }
+      } else if (unidadeNome) {
+        // Fallback para quando acessado via navegação interna do sistema
+        const correspondente = bancoUnidades.find(
+          (u) =>
+            u.nomeFantasia.toLowerCase().includes(unidadeNome.toLowerCase()) ||
+            unidadeNome.toLowerCase().includes((u.id || '').toLowerCase())
+        ) || {
+          id: 'unidade-atual',
+          nomeFantasia: unidadeNome,
+          contato: '(11) 99999-8888',
+          corTematica: 'blue'
+        };
+        setUnidadeAtual(correspondente);
       } else {
-        setUnidadeAtual(null); // Unidade informada na URL não existe
+        setUnidadeAtual(bancoUnidades[0] || {
+          id: 'pitstop',
+          nomeFantasia: 'Pit Stop Lava Jato',
+          contato: '(11) 99999-8888',
+          corTematica: 'blue'
+        });
       }
-    } else if (unidadeNome) {
-      // Fallback para quando acessado via navegação interna do sistema
-      const correspondente = bancoUnidades.find(
-        (u) =>
-          u.nomeFantasia.toLowerCase().includes(unidadeNome.toLowerCase()) ||
-          unidadeNome.toLowerCase().includes(u.id)
-      ) || bancoUnidades[0];
-      setUnidadeAtual(correspondente);
-    } else {
-      setUnidadeAtual(bancoUnidades[0]);
+    } catch (e) {
+      console.error('Erro ao resolver unidade no cliente:', e);
+      setUnidadeAtual(bancoUnidades[0] || {
+        id: 'pitstop',
+        nomeFantasia: 'Pit Stop Lava Jato',
+        contato: '(11) 99999-8888',
+        corTematica: 'blue'
+      });
+    } finally {
+      setCarregandoUnidade(false);
     }
-    
-    setCarregandoUnidade(false);
   }, [unidadeNome, bancoUnidades]);
 
   // ==========================================

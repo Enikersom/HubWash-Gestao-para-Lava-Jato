@@ -39,6 +39,7 @@ import {
   Building2,
   ArrowLeft
 } from 'lucide-react';
+import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from '../firebase';
 import {
   ItemFila,
   Funcionario,
@@ -198,6 +199,122 @@ export default function PainelLavaJato({
     localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(agendamentos));
   }, [agendamentos]);
 
+  // Helper para identificar se o documento do Firestore pertence a este lava-jato
+  const slugUnidade = (unidadeNome || 'pitstop')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  const pertenceAEstaUnidade = (docUnidadeId: string) => {
+    if (!docUnidadeId) return true;
+    const docLimpo = docUnidadeId.toLowerCase().trim();
+    const nomeLimpo = (unidadeNome || '').toLowerCase().trim();
+    const slugAtual = slugUnidade;
+    return (
+      docLimpo === slugAtual ||
+      docLimpo === nomeLimpo ||
+      nomeLimpo.includes(docLimpo) ||
+      docLimpo.includes(slugAtual) ||
+      (docLimpo.includes('pitstop') && slugAtual.includes('pitstop')) ||
+      (docLimpo.includes('ducha') && slugAtual.includes('ducha')) ||
+      (docLimpo.includes('express') && slugAtual.includes('express'))
+    );
+  };
+
+  // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE (CLIENTES E AGENDAMENTOS)
+  useEffect(() => {
+    if (!db) return;
+
+    let unsubClientes: (() => void) | null = null;
+    let unsubAgendamentos: (() => void) | null = null;
+
+    try {
+      // 1. Ouvir coleção 'clientes' em tempo real
+      unsubClientes = onSnapshot(
+        collection(db, 'clientes'),
+        (snapshot) => {
+          const clientesFirestore: ClienteFidelidade[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const clienteUnidade = data.unidadeVinculadaId || '';
+
+            if (!clienteUnidade || pertenceAEstaUnidade(clienteUnidade)) {
+              const veiculoFormatado = data.modelo
+                ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
+                : data.veiculoPrincipal || 'Veículo Cadastrado';
+
+              clientesFirestore.push({
+                id: docSnap.id,
+                nome: data.nome || 'Cliente',
+                telefone: data.contato || data.telefone || '(11) 99999-0000',
+                veiculoPrincipal: veiculoFormatado,
+                pontos: Number(data.pontosFidelidade) || 1,
+                totalGasto: data.totalGasto || 0
+              });
+            }
+          });
+
+          if (clientesFirestore.length > 0) {
+            setClientes((prev) => {
+              const mapa = new Map<string, ClienteFidelidade>();
+              prev.forEach((c) => mapa.set(c.id, c));
+              clientesFirestore.forEach((c) => mapa.set(c.id, c));
+              return Array.from(mapa.values());
+            });
+          }
+        },
+        (error) => {
+          console.warn('Firestore onSnapshot clientes (Painel):', error);
+        }
+      );
+
+      // 2. Ouvir coleção 'agendamentos' em tempo real
+      unsubAgendamentos = onSnapshot(
+        collection(db, 'agendamentos'),
+        (snapshot) => {
+          const agendamentosFirestore: AgendamentoPWA[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (pertenceAEstaUnidade(data.unidadeId || '')) {
+              agendamentosFirestore.push({
+                id: docSnap.id,
+                cliente: data.cliente || 'Cliente App',
+                telefone: data.telefone || '(11) 99999-0000',
+                veiculo: data.veiculo || 'Veículo Agendado',
+                servico: data.servico || 'Lavagem Completa',
+                data: data.data || 'Hoje',
+                horario: data.horario || '12:00',
+                status: (data.status as any) || 'Pendente'
+              });
+            }
+          });
+
+          if (agendamentosFirestore.length > 0) {
+            setAgendamentos((prev) => {
+              const mapa = new Map<string, AgendamentoPWA>();
+              prev.forEach((ag) => mapa.set(ag.id, ag));
+              agendamentosFirestore.forEach((ag) => mapa.set(ag.id, ag));
+              return Array.from(mapa.values());
+            });
+          }
+        },
+        (error) => {
+          console.warn('Firestore onSnapshot agendamentos (Painel):', error);
+        }
+      );
+    } catch (err) {
+      console.warn('Erro ao configurar listeners do Firestore:', err);
+    }
+
+    return () => {
+      if (unsubClientes) unsubClientes();
+      if (unsubAgendamentos) unsubAgendamentos();
+    };
+  }, [unidadeNome]);
+
   // ==========================================
   // 8. BANNERS PROMOCIONAIS
   // ==========================================
@@ -215,7 +332,7 @@ export default function PainelLavaJato({
   // ==========================================
   // LOGICA: EXCLUSÃO CONFIRMADA (MODAL INTERNO)
   // ==========================================
-  const confirmarExclusao = () => {
+  const confirmarExclusao = async () => {
     if (!itemParaExcluir) return;
 
     const { tipo, id, nome } = itemParaExcluir;
@@ -224,10 +341,24 @@ export default function PainelLavaJato({
       setVeiculosFila(prev => prev.filter(item => item.id !== id));
     } else if (tipo === 'agendamento') {
       setAgendamentos(prev => prev.filter(item => item.id !== id));
+      try {
+        if (db && !id.startsWith('17') && isNaN(Number(id))) {
+          await deleteDoc(doc(db, 'agendamentos', id));
+        }
+      } catch (err) {
+        console.warn('Erro ao remover agendamento do Firestore:', err);
+      }
     } else if (tipo === 'checklist') {
       setChecklists(prev => prev.filter(item => item.id !== id));
     } else if (tipo === 'cliente') {
       setClientes(prev => prev.filter(item => item.id !== id));
+      try {
+        if (db && !id.startsWith('17') && isNaN(Number(id))) {
+          await deleteDoc(doc(db, 'clientes', id));
+        }
+      } catch (err) {
+        console.warn('Erro ao remover cliente do Firestore:', err);
+      }
     } else if (tipo === 'funcionario') {
       setFuncionarios(prev => prev.filter(item => item.id !== id));
     } else if (tipo === 'produto') {
@@ -328,15 +459,16 @@ export default function PainelLavaJato({
   };
 
   // Cadastrar Cliente Fidelidade
-  const handleCadastrarCliente = (e: React.FormEvent) => {
+  const handleCadastrarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoCliNome.trim()) {
       mostrarToast('Digite o nome do cliente.', 'erro');
       return;
     }
 
+    const tempId = String(Date.now());
     const novoCli: ClienteFidelidade = {
-      id: String(Date.now()),
+      id: tempId,
       nome: novoCliNome.trim(),
       telefone: novoCliTel.trim() || 'Não informado',
       veiculoPrincipal: novoCliVeiculo.trim() || 'Não informado',
@@ -347,6 +479,23 @@ export default function PainelLavaJato({
     setNovoCliNome('');
     setNovoCliTel('');
     setNovoCliVeiculo('');
+
+    try {
+      if (db) {
+        await addDoc(collection(db, 'clientes'), {
+          nome: novoCli.nome,
+          contato: novoCli.telefone,
+          modelo: novoCli.veiculoPrincipal,
+          placa: '',
+          unidadeVinculadaId: slugUnidade,
+          pontosFidelidade: 1,
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn('Cliente salvo localmente (Firestore offline/não configurado):', err);
+    }
+
     mostrarToast(`Cliente ${novoCli.nome} cadastrado com sucesso!`, 'sucesso');
   };
 
@@ -458,15 +607,16 @@ export default function PainelLavaJato({
   };
 
   // Criar Agendamento
-  const handleCriarAgendamento = (e: React.FormEvent) => {
+  const handleCriarAgendamento = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoAgendCliente.trim() || !novoAgendVeiculo.trim()) {
       mostrarToast('Preencha cliente e veículo do agendamento.', 'erro');
       return;
     }
 
+    const tempId = String(Date.now());
     const novo: AgendamentoPWA = {
-      id: String(Date.now()),
+      id: tempId,
       cliente: novoAgendCliente.trim(),
       telefone: novoAgendTel.trim() || '(11) 99999-0000',
       veiculo: novoAgendVeiculo.trim(),
@@ -480,6 +630,25 @@ export default function PainelLavaJato({
     setNovoAgendCliente('');
     setNovoAgendVeiculo('');
     setNovoAgendTel('');
+
+    try {
+      if (db) {
+        await addDoc(collection(db, 'agendamentos'), {
+          unidadeId: slugUnidade,
+          cliente: novo.cliente,
+          telefone: novo.telefone,
+          veiculo: novo.veiculo,
+          servico: novo.servico,
+          data: novo.data,
+          horario: novo.horario,
+          status: novo.status,
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn('Agendamento salvo localmente (Firestore offline/não configurado):', err);
+    }
+
     mostrarToast(`Agendamento de ${novo.cliente} confirmado para as ${novo.horario}!`, 'sucesso');
   };
 

@@ -142,7 +142,7 @@ export default function AppClientePWA({
   const [telaAtiva, setTelaAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar' | 'fidelidade'>(() => {
     if (telaInicial) return telaInicial;
     const sessao = localStorage.getItem('hubwash_cliente_sessao');
-    return sessao ? 'home' : 'login';
+    return sessao ? 'home' : 'cadastro';
   });
 
   // Agendamentos persistentes
@@ -202,6 +202,16 @@ export default function AppClientePWA({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const slugUnidadeDaURL = params.get('unidade');
+    const rotaDaURL = params.get('rota')?.toLowerCase();
+
+    // Se o usuário não estiver autenticado, garante a tela de cadastro imediata para rotas de cliente
+    if (!usuarioLogado) {
+      if (rotaDaURL === 'login' || telaInicial === 'login') {
+        setTelaAtiva('login');
+      } else {
+        setTelaAtiva('cadastro');
+      }
+    }
 
     if (slugUnidadeDaURL) {
       const slugLimpo = slugUnidadeDaURL.toLowerCase().trim();
@@ -240,9 +250,6 @@ export default function AppClientePWA({
         const unidadeRecuperada = bancoUnidades.find(u => u.id.toLowerCase() === inquilinoSalvoNaMemoria.toLowerCase());
         if (unidadeRecuperada) {
           setUnidadeAtual(unidadeRecuperada);
-          if (!usuarioLogado) {
-            setTelaAtiva('login');
-          }
         } else if (unidadeNome) {
           setUnidadeAtual({
             id: inquilinoSalvoNaMemoria,
@@ -260,7 +267,7 @@ export default function AppClientePWA({
       }
     }
     setCarregandoUnidade(false);
-  }, [bancoUnidades, unidadeNome, usuarioLogado]);
+  }, [bancoUnidades, unidadeNome, usuarioLogado, telaInicial]);
 
   // CADASTRO DE CLIENTE
   const handleCadastro = (e: React.FormEvent) => {
@@ -733,7 +740,7 @@ export default function AppClientePWA({
                     className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
                   >
                     <CheckCircle size={15} />
-                    <span>Concluir Cadastro</span>
+                    <span>Salvar Cadastro e Entrar</span>
                   </button>
 
                   <button

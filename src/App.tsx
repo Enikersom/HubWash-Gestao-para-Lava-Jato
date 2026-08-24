@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
 import LoginOTP from './components/LoginOTP';
 import AdminMaster from './components/AdminMaster';
@@ -70,9 +70,9 @@ export default function App() {
   });
 
   const [telaClienteInicial, setTelaClienteInicial] = useState<'login' | 'cadastro' | 'home'>(() => {
-    if (rotaSlug === 'cadastro') return 'cadastro';
+    // Se a URL for do cliente ou contiver unidade, obrigatoriamente inicia no cadastro se não houver login prévio
     if (rotaSlug === 'login') return 'login';
-    return 'home';
+    return 'cadastro';
   });
 
   const [unidadeSelecionada, setUnidadeSelecionada] = useState<string>(() => {
@@ -80,6 +80,29 @@ export default function App() {
   });
 
   const [erroApp, setErroApp] = useState<string | null>(null);
+
+  // Efeito de inicialização e validação das rotas multi-inquilino
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const uParam = params.get('unidade');
+    const rParam = params.get('rota');
+
+    if (uParam) {
+      setAutenticado(true);
+      setTelaAtual('cliente');
+      setUnidadeSelecionada(resolverNomeUnidade(uParam.trim().toLowerCase()));
+
+      const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
+      // Se não há usuário logado ou a rota for cliente/cadastro, obriga abrir o formulário de cadastro
+      if (!sessaoSalva || rParam?.toLowerCase() === 'cliente' || rParam?.toLowerCase() === 'cadastro') {
+        setTelaClienteInicial('cadastro');
+      } else if (rParam?.toLowerCase() === 'login') {
+        setTelaClienteInicial('login');
+      } else {
+        setTelaClienteInicial('home');
+      }
+    }
+  }, []);
 
   // Tratamento de Erro Seguro em HTML Estruturado (fundo visível, sem travar o celular)
   if (erroApp) {
@@ -154,26 +177,3 @@ export default function App() {
           setAutenticado(false);
         }}
         onIrParaLavaJato={(nome?: string) => {
-          if (nome) setUnidadeSelecionada(nome);
-          setTelaAtual('lavajato');
-        }}
-        onIrParaCliente={(nome?: string) => {
-          if (nome) setUnidadeSelecionada(nome);
-          setTelaClienteInicial('home');
-          setTelaAtual('cliente');
-        }}
-      />
-    );
-  }
-
-  // TELA: PAINEL OPERACIONAL LAVA JATO
-  return (
-    <PainelLavaJato
-      unidadeNome={unidadeSelecionada}
-      onLogout={() => {
-        setAutenticado(false);
-      }}
-    />
-  );
-}
-

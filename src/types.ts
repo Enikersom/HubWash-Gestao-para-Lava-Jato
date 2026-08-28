@@ -64,6 +64,7 @@ export interface ProdutoEstoque {
 export interface ClienteFidelidade {
   id: string;
   nome: string;
+  email?: string;
   telefone: string;
   pontos: number;
   veiculoPrincipal?: string;

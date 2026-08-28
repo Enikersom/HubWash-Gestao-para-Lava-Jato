@@ -281,9 +281,9 @@ export default function AppClientePWA({
     try {
       unsubAgendamentos = onSnapshot(
         collection(db, 'agendamentos'),
-        (snapshot) => {
+        (snapshot: any) => {
           const listaFirestore: Agendamento[] = [];
-          snapshot.forEach((docSnap) => {
+          snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             listaFirestore.push({
               id: docSnap.id,
@@ -305,7 +305,7 @@ export default function AppClientePWA({
             });
           }
         },
-        (error) => {
+        (error: any) => {
           console.warn('Firestore onSnapshot agendamentos (AppCliente):', error);
         }
       );
@@ -313,9 +313,9 @@ export default function AppClientePWA({
       // Escuta clientes cadastrados em tempo real do Firebase
       unsubClientes = onSnapshot(
         collection(db, 'clientes'),
-        (snapshot) => {
+        (snapshot: any) => {
           const clientesFirestore: Cliente[] = [];
-          snapshot.forEach((docSnap) => {
+          snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             clientesFirestore.push({
               nome: data.nome || '',
@@ -346,7 +346,7 @@ export default function AppClientePWA({
             });
           }
         },
-        (error) => {
+        (error: any) => {
           console.warn('Firestore onSnapshot clientes (AppCliente):', error);
         }
       );
@@ -1148,3 +1148,145 @@ export default function AppClientePWA({
                           onClick={() => setAgendaHora(h)}
                           className={`py-2 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
                             isOcupado
+                              ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
+                              : isSelecionado
+                              ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
+                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
+                          }`}
+                        >
+                          <span>{h}</span>
+                          <span className="text-[8px] font-sans font-normal mt-0.5">
+                            {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={!agendaHora}
+                    className={`w-full py-3.5 rounded-xl font-bold uppercase tracking-wider text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
+                      agendaHora ? corTemaBtn : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    <CheckCircle size={15} />
+                    <span>Confirmar Agendamento</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TELA 5: FIDELIDADE */}
+          {/* ========================================== */}
+          {telaAtiva === 'fidelidade' && usuarioLogado && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTelaAtiva('home')}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition cursor-pointer"
+                >
+                  <ChevronLeft size={16} /> Voltar
+                </button>
+                <h2 className="text-sm font-bold text-white">Cartão Fidelidade Digital</h2>
+                <div className="w-10" />
+              </div>
+
+              <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/40 border border-amber-500/30 rounded-3xl p-5 shadow-2xl space-y-4 text-center">
+                <div className="flex items-center justify-between">
+                  <div className="text-left">
+                    <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Programa VIP</span>
+                    <h3 className="font-bold text-sm text-white">{unidadeAtual.nomeFantasia}</h3>
+                  </div>
+                  <Gift className="w-6 h-6 text-amber-400 animate-bounce" />
+                </div>
+
+                {/* Grade dos 10 Selos */}
+                <div className="grid grid-cols-5 gap-2.5 py-2">
+                  {Array.from({ length: 10 }).map((_, index) => {
+                    const seloPreenchido = index < usuarioLogado.pontosFidelidade;
+                    const isUltimo = index === 9;
+
+                    return (
+                      <div
+                        key={index}
+                        className={`aspect-square rounded-2xl border flex flex-col items-center justify-center transition-all ${
+                          seloPreenchido
+                            ? 'bg-amber-500 border-amber-300 text-slate-950 shadow-lg shadow-amber-500/30 font-bold'
+                            : isUltimo
+                            ? 'bg-amber-500/10 border-dashed border-amber-500/50 text-amber-400'
+                            : 'bg-slate-950/80 border-slate-800 text-slate-600'
+                        }`}
+                      >
+                        {seloPreenchido ? (
+                          <CheckCircle2 size={20} className="text-slate-950 stroke-[2.5]" />
+                        ) : isUltimo ? (
+                          <Gift size={18} />
+                        ) : (
+                          <span className="text-xs font-mono font-semibold">{index + 1}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-white">
+                    {usuarioLogado.pontosFidelidade} de 10 Lavagens Realizadas
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    A cada lavagem concluída no {unidadeAtual.nomeFantasia} você ganha 1 selo. Ao completar 10 selos, sua próxima ducha é grátis!
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </main>
+
+        {/* BOTTOM BAR DE NAVEGAÇÃO RÁPIDA (SE LOGADO) */}
+        {usuarioLogado && telaAtiva !== 'login' && telaAtiva !== 'cadastro' && (
+          <nav className="bg-slate-950 border-t border-slate-800 px-6 py-2.5 flex items-center justify-around z-30">
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('home')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'home' ? 'text-blue-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Car size={18} />
+              <span>Início</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('agendar')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'agendar' ? 'text-blue-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Calendar size={18} />
+              <span>Agendar</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('fidelidade')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'fidelidade' ? 'text-amber-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Award size={18} />
+              <span>Fidelidade</span>
+            </button>
+          </nav>
+        )}
+      </div>
+    </div>
+  );
+}

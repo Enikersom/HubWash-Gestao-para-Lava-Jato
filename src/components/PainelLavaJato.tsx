@@ -235,9 +235,9 @@ export default function PainelLavaJato({
       // 1. Ouvir coleção 'clientes' em tempo real
       unsubClientes = onSnapshot(
         collection(db, 'clientes'),
-        (snapshot) => {
+        (snapshot: any) => {
           const clientesFirestore: ClienteFidelidade[] = [];
-          snapshot.forEach((docSnap) => {
+          snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             const clienteUnidade = data.unidadeVinculadaId || '';
 
@@ -266,7 +266,7 @@ export default function PainelLavaJato({
             });
           }
         },
-        (error) => {
+        (error: any) => {
           console.warn('Firestore onSnapshot clientes (Painel):', error);
         }
       );
@@ -274,9 +274,9 @@ export default function PainelLavaJato({
       // 2. Ouvir coleção 'agendamentos' em tempo real
       unsubAgendamentos = onSnapshot(
         collection(db, 'agendamentos'),
-        (snapshot) => {
+        (snapshot: any) => {
           const agendamentosFirestore: AgendamentoPWA[] = [];
-          snapshot.forEach((docSnap) => {
+          snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             if (pertenceAEstaUnidade(data.unidadeId || '')) {
               agendamentosFirestore.push({
@@ -301,7 +301,7 @@ export default function PainelLavaJato({
             });
           }
         },
-        (error) => {
+        (error: any) => {
           console.warn('Firestore onSnapshot agendamentos (Painel):', error);
         }
       );

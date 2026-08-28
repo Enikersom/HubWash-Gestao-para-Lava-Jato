@@ -177,3 +177,74 @@ export default function App() {
             <span>Voltar ao Início</span>
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // TELA DE AUTENTICAÇÃO / LOGIN OTP
+  if (!autenticado) {
+    return (
+      <LoginOTP
+        onSuccess={(role, unidadeNome, telaCliente) => {
+          setAutenticado(true);
+          if (role === 'master') {
+            setTelaAtual('master');
+          } else if (role === 'cliente') {
+            if (unidadeNome) setUnidadeSelecionada(unidadeNome);
+            if (telaCliente) setTelaClienteInicial(telaCliente);
+            setTelaAtual('cliente');
+          } else {
+            if (unidadeNome) {
+              setUnidadeSelecionada(unidadeNome);
+            }
+            setTelaAtual('lavajato');
+          }
+        }}
+      />
+    );
+  }
+
+  // TELA: APLICATIVO DO CLIENTE (PWA)
+  if (telaAtual === 'cliente') {
+    return (
+      <AppClientePWA
+        unidadeNome={unidadeSelecionada}
+        telaInicial={telaClienteInicial}
+        onVoltarLogin={() => {
+          setAutenticado(false);
+        }}
+      />
+    );
+  }
+
+  // TELA: ADMIN MASTER (HUBWASH)
+  if (telaAtual === 'master') {
+    return (
+      <AdminMaster
+        onLogout={() => {
+          setAutenticado(false);
+        }}
+        onIrParaLavaJato={(nome?: string) => {
+          if (nome) setUnidadeSelecionada(nome);
+          setTelaAtual('lavajato');
+        }}
+        onIrParaCliente={(nome?: string) => {
+          if (nome) setUnidadeSelecionada(nome);
+          setTelaClienteInicial('home');
+          setTelaAtual('cliente');
+        }}
+      />
+    );
+  }
+
+  // TELA: PAINEL OPERACIONAL LAVA JATO
+  return (
+    <PainelLavaJato
+      unidadeNome={unidadeSelecionada}
+      onLogout={() => {
+        setAutenticado(false);
+      }}
+    />
+  );
+}
+

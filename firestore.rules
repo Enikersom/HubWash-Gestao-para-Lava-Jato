@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regra para Clientes
+    match /clientes/{clienteId} {
+      allow read, write: if true;
+    }
+
+    // Regra para Agendamentos
+    match /agendamentos/{agendamentoId} {
+      allow read, write: if true;
+    }
+
+    // Default deny para outros documentos
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

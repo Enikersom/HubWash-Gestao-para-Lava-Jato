@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getFirestore,
+  db,
   collection,
   addDoc,
   doc,
@@ -12,45 +11,15 @@ import {
   onSnapshot,
   query,
   where,
-  orderBy
-} from 'firebase/firestore';
+  orderBy,
+  firebaseConfig
+} from './firebase';
 import LoginOTP from './components/LoginOTP';
 import AdminMaster from './components/AdminMaster';
 import PainelLavaJato from './components/PainelLavaJato';
 import AppClientePWA from './components/AppClientePWA';
 
-// ============================================================================
-// CONFIGURAÇÃO DO FIREBASE FIRESTORE
-// Espaço reservado para inserção das chaves oficiais do projeto Firebase Console
-// ou via variáveis de ambiente (.env)
-// ============================================================================
-export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || ""
-};
-
-// Inicialização resiliente do Firebase
-const app = !getApps().length
-  ? initializeApp(
-      firebaseConfig.projectId
-        ? firebaseConfig
-        : {
-            apiKey: "AIzaSyDemoKeyForPreviewModeOnly12345",
-            authDomain: "hubwash-preview.firebaseapp.com",
-            projectId: "hubwash-preview",
-            storageBucket: "hubwash-preview.appspot.com",
-            messagingSenderId: "123456789",
-            appId: "1:123456789:web:demo"
-          }
-    )
-  : getApp();
-
-export const db = getFirestore(app);
-export { collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy };
+export { db, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, firebaseConfig };
 
 // Função segura para ler parâmetros de busca na URL
 

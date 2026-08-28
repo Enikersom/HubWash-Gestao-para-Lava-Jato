@@ -174,6 +174,7 @@ export default function PainelLavaJato({
     return salvos ? JSON.parse(salvos) : [];
   });
   const [novoCliNome, setNovoCliNome] = useState('');
+  const [novoCliEmail, setNovoCliEmail] = useState('');
   const [novoCliTel, setNovoCliTel] = useState('');
   const [novoCliVeiculo, setNovoCliVeiculo] = useState('');
   const [buscaCliente, setBuscaCliente] = useState('');
@@ -235,6 +236,7 @@ export default function PainelLavaJato({
             clientesFirestore.push({
               id: docSnap.id,
               nome: data.nome || 'Cliente',
+              email: data.email || (data.nome ? `${data.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : ''),
               telefone: data.contato || data.telefone || '(11) 99999-0000',
               veiculoPrincipal: veiculoFormatado,
               pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 1),
@@ -448,10 +450,12 @@ export default function PainelLavaJato({
       return;
     }
 
+    const emailLimpo = novoCliEmail.trim() || `${novoCliNome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
     const tempId = String(Date.now());
     const novoCli: ClienteFidelidade = {
       id: tempId,
       nome: novoCliNome.trim(),
+      email: emailLimpo,
       telefone: novoCliTel.trim() || 'Não informado',
       veiculoPrincipal: novoCliVeiculo.trim() || 'Não informado',
       pontos: 1
@@ -459,6 +463,7 @@ export default function PainelLavaJato({
 
     setClientes([novoCli, ...clientes]);
     setNovoCliNome('');
+    setNovoCliEmail('');
     setNovoCliTel('');
     setNovoCliVeiculo('');
 
@@ -466,6 +471,8 @@ export default function PainelLavaJato({
       if (db) {
         await addDoc(collection(db, 'clientes'), {
           nome: novoCli.nome,
+          email: emailLimpo,
+          senhaAcesso: '123456',
           contato: novoCli.telefone,
           modelo: novoCli.veiculoPrincipal,
           placa: '',
@@ -479,7 +486,7 @@ export default function PainelLavaJato({
       console.warn('Cliente salvo localmente (Firestore offline/não configurado):', err);
     }
 
-    mostrarToast(`Cliente ${novoCli.nome} cadastrado com sucesso!`, 'sucesso');
+    mostrarToast(`Cliente ${novoCli.nome} (${emailLimpo}) cadastrado com sucesso!`, 'sucesso');
   };
 
   // Cadastro de Funcionário
@@ -1305,7 +1312,7 @@ export default function PainelLavaJato({
                   <Gift className="w-4 h-4 text-pink-400" /> Cadastrar Cliente no Cartão Fidelidade
                 </h3>
 
-                <form onSubmit={handleCadastrarCliente} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                <form onSubmit={handleCadastrarCliente} className="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
                   <div>
                     <label className="block text-slate-400 font-medium mb-1">Nome Completo *</label>
                     <input
@@ -1314,6 +1321,17 @@ export default function PainelLavaJato({
                       onChange={(e) => setNovoCliNome(e.target.value)}
                       placeholder="Ex: Carlos Andrade"
                       required
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 font-medium mb-1">E-mail do Cliente</label>
+                    <input
+                      type="email"
+                      value={novoCliEmail}
+                      onChange={(e) => setNovoCliEmail(e.target.value)}
+                      placeholder="carlos@email.com"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
@@ -1346,7 +1364,7 @@ export default function PainelLavaJato({
                       className={`w-full py-2 px-3 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer`}
                     >
                       <Plus size={15} />
-                      <span>Cadastrar Fidelidade</span>
+                      <span>Cadastrar</span>
                     </button>
                   </div>
                 </form>
@@ -1385,6 +1403,7 @@ export default function PainelLavaJato({
                           <div className="flex items-start justify-between border-b border-slate-800 pb-2.5">
                             <div>
                               <h4 className="text-sm font-bold text-white">{c.nome}</h4>
+                              <p className="text-xs text-cyan-400 font-mono">{c.email || 'sem e-mail'}</p>
                               <p className="text-xs text-slate-400">{c.telefone} • {c.veiculoPrincipal}</p>
                             </div>
 

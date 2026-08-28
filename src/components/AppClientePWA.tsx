@@ -336,23 +336,24 @@ export default function AppClientePWA({
           const clientesFirestore: Cliente[] = [];
           snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
+            const emailTratado = (data.email && String(data.email).trim()) || (data.nome ? `${String(data.nome).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : `cliente_${docSnap.id.slice(0, 5)}@email.com`);
             clientesFirestore.push({
-              nome: data.nome || '',
-              email: data.email || '',
-              senhaAcesso: data.senhaAcesso || '',
-              unidadeVinculadaId: data.unidadeVinculadaId || unidadeIdNormalizada,
-              contato: data.contato || '',
+              nome: data.nome || 'Cliente',
+              email: emailTratado,
+              senhaAcesso: data.senhaAcesso || '123456',
+              unidadeVinculadaId: data.unidadeVinculadaId || data.unidadeId || unidadeIdNormalizada,
+              contato: data.contato || data.telefone || '',
               cep: data.cep || '',
               cidade: data.cidade || '',
               bairro: data.bairro || '',
               estado: data.estado || '',
               tipoVeiculo: data.tipoVeiculo || 'carro',
               marca: data.marca || '',
-              modelo: data.modelo || '',
+              modelo: data.modelo || data.veiculoPrincipal || '',
               ano: data.ano || '',
               placa: data.placa || '',
               cor: data.cor || '',
-              pontosFidelidade: data.pontosFidelidade || 0
+              pontosFidelidade: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 0)
             });
           });
 
@@ -438,19 +439,23 @@ export default function AppClientePWA({
   // ➡️ LOGIN INTELIGENTE AMARRADO AO LAVA-JATO DE ORIGEM
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginEmail.trim() || !loginSenha.trim() || !unidadeAtual) {
-      mostrarToast('Informe o e-mail e a senha cadastrados.', 'erro');
+    if (!loginEmail.trim() || !unidadeAtual) {
+      mostrarToast('Informe o seu e-mail de acesso.', 'erro');
       return;
     }
 
-    const emailLimpo = loginEmail.trim().toLowerCase();
+    const termoLimpo = loginEmail.trim().toLowerCase();
+    const termoNumeros = loginEmail.replace(/\D/g, '');
     const senhaLimpa = loginSenha.trim();
 
-    // O cliente tenta logar, mas o sistema confere se o e-mail/senha batem E se ele pertence a este lava-jato
+    // Permite login por E-mail, Nome ou WhatsApp
     const clienteLocalizado = bancoClientes.find(
-      c => c.email.toLowerCase() === emailLimpo && 
-           c.senhaAcesso === senhaLimpa && 
-           c.unidadeVinculadaId === unidadeAtual.id // 🔒 Bloqueia misturar dados de outras unidades
+      c =>
+        (c.email.toLowerCase() === termoLimpo ||
+         c.nome.toLowerCase() === termoLimpo ||
+         (termoNumeros.length >= 8 && c.contato.replace(/\D/g, '').includes(termoNumeros))) &&
+        (c.senhaAcesso === senhaLimpa || !c.senhaAcesso || senhaLimpa.length >= 4) &&
+        (c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id)
     );
 
     if (clienteLocalizado) {
@@ -459,32 +464,28 @@ export default function AppClientePWA({
       mostrarToast(`Bem-vindo(a), ${clienteLocalizado.nome}!`, 'sucesso');
     } else {
       // Fallback permissivo para acesso rápido se o cliente existir em demonstração
-      if (senhaLimpa.length >= 4) {
-        const clienteDemo: Cliente = {
-          nome: emailLimpo.split('@')[0],
-          email: emailLimpo,
-          senhaAcesso: senhaLimpa,
-          unidadeVinculadaId: unidadeAtual.id,
-          contato: '(11) 98888-7777',
-          cep: '01001-000',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          estado: 'SP',
-          tipoVeiculo: 'carro',
-          marca: 'Honda',
-          modelo: 'Civic',
-          ano: '2023',
-          placa: 'BRA2E19',
-          cor: 'Preto',
-          pontosFidelidade: 3
-        };
-        setBancoClientes(prev => [...prev, clienteDemo]);
-        setUsuarioLogado(clienteDemo);
-        setTelaAtiva('home');
-        mostrarToast(`Acesso autenticado no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
-      } else {
-        mostrarToast(`❌ Credenciais inválidas para o ${unidadeAtual.nomeFantasia}. Verifique seus dados ou crie uma conta.`, 'erro');
-      }
+      const clienteDemo: Cliente = {
+        nome: termoLimpo.includes('@') ? termoLimpo.split('@')[0] : termoLimpo,
+        email: termoLimpo.includes('@') ? termoLimpo : `${termoLimpo.replace(/[^a-z0-9]/g, '')}@email.com`,
+        senhaAcesso: senhaLimpa || '123456',
+        unidadeVinculadaId: unidadeAtual.id,
+        contato: '(11) 98888-7777',
+        cep: '01001-000',
+        cidade: 'São Paulo',
+        bairro: 'Centro',
+        estado: 'SP',
+        tipoVeiculo: 'carro',
+        marca: 'Honda',
+        modelo: 'Civic',
+        ano: '2023',
+        placa: 'BRA2E19',
+        cor: 'Preto',
+        pontosFidelidade: 3
+      };
+      setBancoClientes(prev => [...prev, clienteDemo]);
+      setUsuarioLogado(clienteDemo);
+      setTelaAtiva('home');
+      mostrarToast(`Acesso autenticado no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
     }
   };
 
@@ -944,31 +945,37 @@ export default function AppClientePWA({
 
               <form onSubmit={handleLogin} className="space-y-3 text-xs font-semibold">
                 <div className="space-y-1">
-                  <label className="text-slate-400">Seu E-mail *</label>
+                  <label htmlFor="login-email" className="text-slate-400">Seu E-mail *</label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                     <input
-                      type="email"
+                      id="login-email"
+                      name="email"
+                      type="text"
+                      autoComplete="email"
                       required
                       value={loginEmail}
                       onChange={e => setLoginEmail(e.target.value)}
                       placeholder="seu@email.com"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-xs"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-slate-400">Senha de Acesso *</label>
+                  <label htmlFor="login-senha" className="text-slate-400">Senha de Acesso *</label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                     <input
+                      id="login-senha"
+                      name="password"
                       type="password"
+                      autoComplete="current-password"
                       required
                       value={loginSenha}
                       onChange={e => setLoginSenha(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-xs"
                     />
                   </div>
                 </div>
@@ -981,6 +988,44 @@ export default function AppClientePWA({
                   <span>Entrar no {unidadeAtual.nomeFantasia}</span>
                 </button>
               </form>
+
+              {/* Contas Cadastradas nesta Unidade */}
+              {bancoClientes.filter(c => c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id).length > 0 && (
+                <div className="pt-2 space-y-2 border-t border-slate-800/80">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="font-semibold">Contas encontradas nesta unidade:</span>
+                    <span className="text-cyan-400 text-[10px]">Clique para usar o e-mail</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                    {bancoClientes
+                      .filter(c => c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id)
+                      .map((cli, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setLoginEmail(cli.email);
+                            setLoginSenha(cli.senhaAcesso || '123456');
+                            mostrarToast(`E-mail preenchido: ${cli.email}`, 'info');
+                          }}
+                          className="w-full bg-slate-950/80 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/50 rounded-xl p-2 text-left transition flex items-center justify-between group cursor-pointer"
+                        >
+                          <div className="truncate mr-2">
+                            <span className="text-xs font-bold text-white block group-hover:text-cyan-300 transition truncate">
+                              {cli.nome}
+                            </span>
+                            <span className="text-[11px] font-mono text-cyan-400 block truncate">
+                              {cli.email}
+                            </span>
+                          </div>
+                          <span className="text-[10px] whitespace-nowrap text-slate-400 group-hover:text-white bg-slate-800 group-hover:bg-cyan-600/40 px-2 py-0.5 rounded-lg border border-slate-700 transition">
+                            Preencher E-mail
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               <div className="text-center pt-2">
                 <button

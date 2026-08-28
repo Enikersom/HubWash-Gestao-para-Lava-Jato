@@ -26,7 +26,7 @@ import {
   ArrowLeft,
   X
 } from 'lucide-react';
-import { db, collection, addDoc, onSnapshot, doc, deleteDoc } from '../firebase';
+import { db, collection, addDoc, onSnapshot, doc, deleteDoc, query, where, orderBy } from '../firebase';
 
 export interface UnidadeLavaJato {
   id: string;
@@ -270,24 +270,38 @@ export default function AppClientePWA({
     setCarregandoUnidade(false);
   }, [bancoUnidades, unidadeNome, usuarioLogado, telaInicial]);
 
+  // ID Padronizado da Unidade
+  const unidadeIdNormalizada = (unidadeAtual?.id || unidadeNome || 'pitstop')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'pitstop';
+
   // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE
   useEffect(() => {
     if (!db) return;
 
-    // Escuta agendamentos em tempo real do Firebase
+    // Escuta agendamentos em tempo real do Firebase filtrados pela unidade
     let unsubAgendamentos: (() => void) | null = null;
     let unsubClientes: (() => void) | null = null;
 
     try {
-      unsubAgendamentos = onSnapshot(
+      const qAgendamentos = query(
         collection(db, 'agendamentos'),
+        where('unidadeId', '==', unidadeIdNormalizada)
+      );
+
+      unsubAgendamentos = onSnapshot(
+        qAgendamentos,
         (snapshot: any) => {
           const listaFirestore: Agendamento[] = [];
           snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             listaFirestore.push({
               id: docSnap.id,
-              unidadeId: data.unidadeId || '',
+              unidadeId: data.unidadeId || unidadeIdNormalizada,
               data: data.data || '',
               horario: data.horario || '',
               veiculo: data.veiculo || '',
@@ -310,9 +324,14 @@ export default function AppClientePWA({
         }
       );
 
-      // Escuta clientes cadastrados em tempo real do Firebase
-      unsubClientes = onSnapshot(
+      // Escuta clientes cadastrados em tempo real do Firebase filtrados pela unidade
+      const qClientes = query(
         collection(db, 'clientes'),
+        where('unidadeVinculadaId', '==', unidadeIdNormalizada)
+      );
+
+      unsubClientes = onSnapshot(
+        qClientes,
         (snapshot: any) => {
           const clientesFirestore: Cliente[] = [];
           snapshot.forEach((docSnap: any) => {
@@ -321,7 +340,7 @@ export default function AppClientePWA({
               nome: data.nome || '',
               email: data.email || '',
               senhaAcesso: data.senhaAcesso || '',
-              unidadeVinculadaId: data.unidadeVinculadaId || '',
+              unidadeVinculadaId: data.unidadeVinculadaId || unidadeIdNormalizada,
               contato: data.contato || '',
               cep: data.cep || '',
               cidade: data.cidade || '',
@@ -358,7 +377,7 @@ export default function AppClientePWA({
       if (unsubAgendamentos) unsubAgendamentos();
       if (unsubClientes) unsubClientes();
     };
-  }, []);
+  }, [unidadeIdNormalizada]);
 
   // CADASTRO DE CLIENTE
   const handleCadastro = async (e: React.FormEvent) => {
@@ -368,7 +387,7 @@ export default function AppClientePWA({
       return;
     }
 
-    if (bancoClientes.some(c => c.email.toLowerCase() === cadEmail.trim().toLowerCase() && c.unidadeVinculadaId === unidadeAtual.id)) {
+    if (bancoClientes.some(c => c.email.toLowerCase() === cadEmail.trim().toLowerCase() && c.unidadeVinculadaId === unidadeIdNormalizada)) {
       mostrarToast('Este e-mail já possui cadastro nesta unidade! Faça o login.', 'erro');
       setLoginEmail(cadEmail.trim());
       setTelaAtiva('login');
@@ -379,7 +398,7 @@ export default function AppClientePWA({
       nome: cadNome.trim(),
       email: cadEmail.trim(),
       senhaAcesso: cadSenha.trim(),
-      unidadeVinculadaId: unidadeAtual.id, // ➡️ Prende a conta dele a este lava-jato
+      unidadeVinculadaId: unidadeIdNormalizada, // ➡️ Prende a conta dele a este lava-jato
       contato: cadContato.trim() || '(11) 99999-0000',
       cep: cadCep.trim() || '01001-000',
       cidade: cadCidade.trim() || 'São Paulo',
@@ -404,6 +423,8 @@ export default function AppClientePWA({
       if (db) {
         await addDoc(collection(db, 'clientes'), {
           ...novoCliente,
+          unidadeId: unidadeIdNormalizada,
+          unidadeVinculadaId: unidadeIdNormalizada,
           createdAt: new Date().toISOString()
         });
       }
@@ -486,7 +507,7 @@ export default function AppClientePWA({
     const tempId = String(Date.now());
     const novoAgendamento: Agendamento = {
       id: tempId,
-      unidadeId: unidadeAtual.id,
+      unidadeId: unidadeIdNormalizada,
       data: agendaData,
       horario: agendaHora,
       veiculo: `${usuarioLogado.modelo} - Placa: ${usuarioLogado.placa}`,
@@ -500,13 +521,14 @@ export default function AppClientePWA({
     const novosPontos = Math.min(10, usuarioLogado.pontosFidelidade + 1);
     const usuarioAtualizado = { ...usuarioLogado, pontosFidelidade: novosPontos };
     setUsuarioLogado(usuarioAtualizado);
-    setBancoClientes(bancoClientes.map(c => (c.email === usuarioLogado.email && c.unidadeVinculadaId === unidadeAtual.id ? usuarioAtualizado : c)));
+    setBancoClientes(bancoClientes.map(c => (c.email === usuarioLogado.email && c.unidadeVinculadaId === unidadeIdNormalizada ? usuarioAtualizado : c)));
 
     // Grava o documento em tempo real no Firebase Firestore na coleção 'agendamentos' contendo unidadeId
     try {
       if (db) {
         const docRef = await addDoc(collection(db, 'agendamentos'), {
-          unidadeId: unidadeAtual.id,
+          unidadeId: unidadeIdNormalizada,
+          unidadeVinculadaId: unidadeIdNormalizada,
           cliente: usuarioLogado.nome,
           telefone: usuarioLogado.contato || '',
           email: usuarioLogado.email || '',
@@ -553,9 +575,19 @@ export default function AppClientePWA({
   const agendamentosExibidos = todosAgendamentos.filter(ag => ag.unidadeId === unidadeAtual?.id);
 
   const horariosDisponiveis = [
-    '07:00', '08:00', '09:00', '10:00', '11:00',
-    '13:00', '14:00', '15:00', '16:00', '17:00'
+    '07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+    '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
   ];
+
+  const horariosManha = horariosDisponiveis.filter(h => {
+    const hora = parseInt(h.split(':')[0], 10);
+    return hora < 12;
+  });
+
+  const horariosTarde = horariosDisponiveis.filter(h => {
+    const hora = parseInt(h.split(':')[0], 10);
+    return hora >= 12;
+  });
 
   if (carregandoUnidade) {
     return (
@@ -1127,40 +1159,84 @@ export default function AppClientePWA({
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <label className="text-slate-400 flex items-center justify-between">
                     <span>Horários Disponíveis *</span>
-                    <span className="text-[10px] text-slate-500">Manhã & Tarde</span>
+                    <span className="text-[10px] text-cyan-400 font-semibold">07:00 - 11:30 | 13:00 - 17:30</span>
                   </label>
 
-                  <div className="grid grid-cols-5 gap-2">
-                    {horariosDisponiveis.map((h) => {
-                      const isOcupado = todosAgendamentos.some(
-                        ag => ag.unidadeId === unidadeAtual.id && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
-                      );
-                      const isSelecionado = agendaHora === h;
+                  {/* Manhã */}
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                      <span>Manhã (07:00 às 11:30)</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {horariosManha.map((h) => {
+                        const isOcupado = todosAgendamentos.some(
+                          ag => ag.unidadeId === (unidadeAtual?.id || unidadeIdNormalizada) && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
+                        );
+                        const isSelecionado = agendaHora === h;
 
-                      return (
-                        <button
-                          key={h}
-                          type="button"
-                          disabled={isOcupado}
-                          onClick={() => setAgendaHora(h)}
-                          className={`py-2 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
-                            isOcupado
-                              ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
-                              : isSelecionado
-                              ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
-                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
-                          }`}
-                        >
-                          <span>{h}</span>
-                          <span className="text-[8px] font-sans font-normal mt-0.5">
-                            {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
-                          </span>
-                        </button>
-                      );
-                    })}
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            disabled={isOcupado}
+                            onClick={() => setAgendaHora(h)}
+                            className={`py-2 rounded-xl text-[11px] font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
+                              isOcupado
+                                ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
+                                : isSelecionado
+                                ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
+                            }`}
+                          >
+                            <span>{h}</span>
+                            <span className="text-[7.5px] font-sans font-normal mt-0.5">
+                              {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Tarde */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+                      <span>Tarde (13:00 às 17:30)</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {horariosTarde.map((h) => {
+                        const isOcupado = todosAgendamentos.some(
+                          ag => ag.unidadeId === (unidadeAtual?.id || unidadeIdNormalizada) && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
+                        );
+                        const isSelecionado = agendaHora === h;
+
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            disabled={isOcupado}
+                            onClick={() => setAgendaHora(h)}
+                            className={`py-2 rounded-xl text-[11px] font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
+                              isOcupado
+                                ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
+                                : isSelecionado
+                                ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
+                            }`}
+                          >
+                            <span>{h}</span>
+                            <span className="text-[7.5px] font-sans font-normal mt-0.5">
+                              {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 

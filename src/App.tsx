@@ -21,6 +21,8 @@ import AppClientePWA from './components/AppClientePWA';
 
 export { db, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, firebaseConfig };
 
+export const URL_BASE_NETLIFY = 'https://hubwashgestaoparalavajato.netlify.app';
+
 // Função segura para ler parâmetros de busca na URL
 
 function getParamSafe(name: string): string | null {

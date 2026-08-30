@@ -28,6 +28,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { LavaJato } from '../types';
+import { URL_BASE_NETLIFY } from '../App';
 
 interface AdminMasterProps {
   onLogout?: () => void;
@@ -165,8 +166,10 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
     salvarLavaJatos(atualizados);
     
     // CONFIGURA O QR CODE PARA APARECER LOGO APÓS O CADASTRO
-    const urlOrigem = window.location.origin;
-    const linkCliente = `${urlOrigem}/?unidade=${slug}&rota=cliente`;
+    const urlOrigem = typeof window !== 'undefined' && window.location.origin.includes('netlify.app') 
+      ? window.location.origin 
+      : URL_BASE_NETLIFY;
+    const linkCliente = `${urlOrigem}/?unidade=${slug}&rota=cadastro`;
     setQrCodeModal({
       visivel: true,
       link: linkCliente,
@@ -187,8 +190,10 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
 
   // FUNÇÃO PARA GERAR O QR CODE VISUAL VIA API GRATUITA
   const abrirQrCodeUnidade = (id: string, nome: string) => {
-    const urlOrigem = window.location.origin;
-    const linkCompleto = `${urlOrigem}/?unidade=${id}&rota=cliente`;
+    const urlOrigem = typeof window !== 'undefined' && window.location.origin.includes('netlify.app') 
+      ? window.location.origin 
+      : URL_BASE_NETLIFY;
+    const linkCompleto = `${urlOrigem}/?unidade=${id}&rota=cadastro`;
     setQrCodeModal({
       visivel: true,
       link: linkCompleto,
@@ -215,7 +220,10 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
   };
 
   const copiarLinkAcesso = (slug: string) => {
-    const url = `${window.location.origin}/?unidade=${slug}&rota=cliente`;
+    const urlOrigem = typeof window !== 'undefined' && window.location.origin.includes('netlify.app') 
+      ? window.location.origin 
+      : URL_BASE_NETLIFY;
+    const url = `${urlOrigem}/?unidade=${slug}&rota=cadastro`;
     navigator.clipboard.writeText(url);
     setCopiadoId(slug);
     mostrarToast('Link do App Cliente copiado com sucesso!', 'sucesso');

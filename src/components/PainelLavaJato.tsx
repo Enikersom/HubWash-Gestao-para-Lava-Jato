@@ -42,9 +42,20 @@ import {
   Copy,
   Download,
   X,
-  UserPlus
+  UserPlus,
+  Minus,
+  RotateCcw
 } from 'lucide-react';
 import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where, orderBy } from '../firebase';
+import { 
+  buscarDadosSincronizados, 
+  registrarClienteServidor, 
+  atualizarPontosClienteServidor, 
+  atualizarStatusAgendamentoServidor, 
+  salvarAgendamentoServidor, 
+  excluirAgendamentoServidor, 
+  excluirClienteServidor 
+} from '../services/apiSync';
 import { URL_BASE_NETLIFY } from '../App';
 import {
   ItemFila,
@@ -260,116 +271,196 @@ export default function PainelLavaJato({
     setTimeout(() => setCopiadoQrLink(false), 2000);
   };
 
-  // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE (CLIENTES E AGENDAMENTOS)
+  // ➡️ SINCRONIZAÇÃO EM TEMPO REAL ENTRE MOBILE E COMPUTADOR/NOTEBOOK (API SERVIDOR + FIRESTORE)
   useEffect(() => {
-    if (!db) return;
+    let ativo = true;
 
+    // 1. Sincronização periódica com o servidor central (Garante comunicação PC <-> Mobile)
+    const sincronizarComServidor = async () => {
+      try {
+        const dados = await buscarDadosSincronizados(unidadeLogada);
+        if (!ativo) return;
+
+        if (dados.clientes && dados.clientes.length > 0) {
+          const clientesMapeados: ClienteFidelidade[] = dados.clientes
+            .filter((c: any) => {
+              const docUnidade = String(c.unidadeVinculadaId || c.unidadeId || c.unidadeSlug || c.unidadeNome || '').toLowerCase();
+              return !docUnidade || aliasesUnidade.some(alias => 
+                docUnidade === alias || 
+                docUnidade.includes(alias) || 
+                alias.includes(docUnidade)
+              );
+            })
+            .map((c: any) => {
+              const veiculoFormatado = c.modelo
+                ? `${c.modelo}${c.placa ? ` (${c.placa})` : ''}`
+                : (c.veiculoPrincipal || (c.placa ? `Placa: ${c.placa}` : 'Veículo Cadastrado'));
+
+              return {
+                id: c.id,
+                nome: c.nome || 'Cliente',
+                email: c.email || '',
+                telefone: c.contato || c.telefone || '(11) 99999-0000',
+                veiculoPrincipal: veiculoFormatado,
+                pontos: typeof c.pontosFidelidade === 'number' ? c.pontosFidelidade : (typeof c.pontos === 'number' ? c.pontos : 0),
+                totalGasto: c.totalGasto || 0
+              };
+            });
+
+          setClientes((prev) => {
+            const mapa = new Map<string, ClienteFidelidade>();
+            prev.forEach((item) => mapa.set(item.id, item));
+            clientesMapeados.forEach((item) => mapa.set(item.id, item));
+            return Array.from(mapa.values());
+          });
+        }
+
+        if (dados.agendamentos && dados.agendamentos.length > 0) {
+          const agendamentosMapeados: AgendamentoPWA[] = dados.agendamentos
+            .filter((a: any) => {
+              const docUnidade = String(a.unidadeId || a.unidadeVinculadaId || a.unidadeSlug || a.unidadeNome || '').toLowerCase();
+              return !docUnidade || aliasesUnidade.some(alias => 
+                docUnidade === alias || 
+                docUnidade.includes(alias) || 
+                alias.includes(docUnidade)
+              );
+            })
+            .map((a: any) => {
+              const veiculoFormatado = a.veiculo || (a.modelo ? `${a.modelo}${a.placa ? ` (${a.placa})` : ''}` : 'Veículo Agendado');
+              return {
+                id: a.id,
+                cliente: a.cliente || a.nome || 'Cliente App',
+                telefone: a.telefone || a.contato || '(11) 99999-0000',
+                veiculo: veiculoFormatado,
+                servico: a.servico || 'Lavagem Completa',
+                data: a.data || 'Hoje',
+                horario: a.horario || '12:00',
+                status: (a.status as any) || 'Pendente'
+              };
+            });
+
+          setAgendamentos((prev) => {
+            const mapa = new Map<string, AgendamentoPWA>();
+            prev.forEach((item) => mapa.set(item.id, item));
+            agendamentosMapeados.forEach((item) => mapa.set(item.id, item));
+            return Array.from(mapa.values());
+          });
+        }
+      } catch (err) {
+        console.warn('Sync server polling error (Painel):', err);
+      }
+    };
+
+    sincronizarComServidor();
+    const intervalId = setInterval(sincronizarComServidor, 3000);
+
+    // 2. Ouvintes em tempo real do Firebase Firestore como canal secundário
     let unsubClientes: (() => void) | null = null;
     let unsubAgendamentos: (() => void) | null = null;
 
-    try {
-      // 1. Ouvir coleção 'clientes' em tempo real
-      const qClientes = query(collection(db, 'clientes'));
+    if (db) {
+      try {
+        const qClientes = query(collection(db, 'clientes'));
+        unsubClientes = onSnapshot(
+          qClientes,
+          (snapshot: any) => {
+            const clientesFirestore: ClienteFidelidade[] = [];
+            snapshot.forEach((docSnap: any) => {
+              const data = docSnap.data();
+              const docUnidade = String(data.unidadeVinculadaId || data.unidadeId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+              
+              const pertence = !docUnidade || aliasesUnidade.some(alias => 
+                docUnidade === alias || 
+                docUnidade.includes(alias) || 
+                alias.includes(docUnidade)
+              );
 
-      unsubClientes = onSnapshot(
-        qClientes,
-        (snapshot: any) => {
-          const clientesFirestore: ClienteFidelidade[] = [];
-          snapshot.forEach((docSnap: any) => {
-            const data = docSnap.data();
-            const docUnidade = String(data.unidadeVinculadaId || data.unidadeId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
-            
-            const pertence = !docUnidade || aliasesUnidade.some(alias => 
-              docUnidade === alias || 
-              docUnidade.includes(alias) || 
-              alias.includes(docUnidade)
-            );
+              if (pertence) {
+                const veiculoFormatado = data.modelo
+                  ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
+                  : (data.veiculoPrincipal || (data.placa ? `Placa: ${data.placa}` : 'Veículo Cadastrado'));
 
-            if (pertence) {
-              const veiculoFormatado = data.modelo
-                ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
-                : (data.veiculoPrincipal || (data.placa ? `Placa: ${data.placa}` : 'Veículo Cadastrado'));
+                clientesFirestore.push({
+                  id: docSnap.id,
+                  nome: data.nome || 'Cliente',
+                  email: data.email || '',
+                  telefone: data.contato || data.telefone || '(11) 99999-0000',
+                  veiculoPrincipal: veiculoFormatado,
+                  pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 0),
+                  totalGasto: data.totalGasto || 0
+                });
+              }
+            });
 
-              clientesFirestore.push({
-                id: docSnap.id,
-                nome: data.nome || 'Cliente',
-                email: data.email || (data.nome ? `${data.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : ''),
-                telefone: data.contato || data.telefone || '(11) 99999-0000',
-                veiculoPrincipal: veiculoFormatado,
-                pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 1),
-                totalGasto: data.totalGasto || 0
+            if (clientesFirestore.length > 0) {
+              setClientes((prev) => {
+                const mapa = new Map<string, ClienteFidelidade>();
+                prev.forEach((c) => mapa.set(c.id, c));
+                clientesFirestore.forEach((c) => mapa.set(c.id, c));
+                return Array.from(mapa.values());
               });
             }
-          });
-
-          if (clientesFirestore.length > 0) {
-            setClientes((prev) => {
-              const mapa = new Map<string, ClienteFidelidade>();
-              prev.forEach((c) => mapa.set(c.id, c));
-              clientesFirestore.forEach((c) => mapa.set(c.id, c));
-              return Array.from(mapa.values());
-            });
+          },
+          (error: any) => {
+            console.warn('Firestore onSnapshot clientes (Painel):', error);
           }
-        },
-        (error: any) => {
-          console.warn('Firestore onSnapshot clientes (Painel):', error);
-        }
-      );
+        );
 
-      // 2. Ouvir coleção 'agendamentos' em tempo real
-      const qAgendamentos = query(collection(db, 'agendamentos'));
+        const qAgendamentos = query(collection(db, 'agendamentos'));
+        unsubAgendamentos = onSnapshot(
+          qAgendamentos,
+          (snapshot: any) => {
+            const agendamentosFirestore: AgendamentoPWA[] = [];
+            snapshot.forEach((docSnap: any) => {
+              const data = docSnap.data();
+              const docUnidade = String(data.unidadeId || data.unidadeVinculadaId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+              
+              const pertence = !docUnidade || aliasesUnidade.some(alias => 
+                docUnidade === alias || 
+                docUnidade.includes(alias) || 
+                alias.includes(docUnidade)
+              );
 
-      unsubAgendamentos = onSnapshot(
-        qAgendamentos,
-        (snapshot: any) => {
-          const agendamentosFirestore: AgendamentoPWA[] = [];
-          snapshot.forEach((docSnap: any) => {
-            const data = docSnap.data();
-            const docUnidade = String(data.unidadeId || data.unidadeVinculadaId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
-            
-            const pertence = !docUnidade || aliasesUnidade.some(alias => 
-              docUnidade === alias || 
-              docUnidade.includes(alias) || 
-              alias.includes(docUnidade)
-            );
+              if (pertence) {
+                const veiculoFormatado = data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo Agendado');
+                agendamentosFirestore.push({
+                  id: docSnap.id,
+                  cliente: data.cliente || data.nome || 'Cliente App',
+                  telefone: data.telefone || data.contato || '(11) 99999-0000',
+                  veiculo: veiculoFormatado,
+                  servico: data.servico || 'Lavagem Completa',
+                  data: data.data || 'Hoje',
+                  horario: data.horario || '12:00',
+                  status: (data.status as any) || 'Pendente'
+                });
+              }
+            });
 
-            if (pertence) {
-              const veiculoFormatado = data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo Agendado');
-              agendamentosFirestore.push({
-                id: docSnap.id,
-                cliente: data.cliente || data.nome || 'Cliente App',
-                telefone: data.telefone || data.contato || '(11) 99999-0000',
-                veiculo: veiculoFormatado,
-                servico: data.servico || 'Lavagem Completa',
-                data: data.data || 'Hoje',
-                horario: data.horario || '12:00',
-                status: (data.status as any) || 'Pendente'
+            if (agendamentosFirestore.length > 0) {
+              setAgendamentos((prev) => {
+                const mapa = new Map<string, AgendamentoPWA>();
+                prev.forEach((a) => mapa.set(a.id, a));
+                agendamentosFirestore.forEach((a) => mapa.set(a.id, a));
+                return Array.from(mapa.values());
               });
             }
-          });
-
-          if (agendamentosFirestore.length > 0) {
-            setAgendamentos((prev) => {
-              const mapa = new Map<string, AgendamentoPWA>();
-              prev.forEach((a) => mapa.set(a.id, a));
-              agendamentosFirestore.forEach((a) => mapa.set(a.id, a));
-              return Array.from(mapa.values());
-            });
+          },
+          (error: any) => {
+            console.warn('Firestore onSnapshot agendamentos (Painel):', error);
           }
-        },
-        (error: any) => {
-          console.warn('Firestore onSnapshot agendamentos (Painel):', error);
-        }
-      );
-    } catch (err) {
-      console.warn('Erro ao configurar listeners do Firestore:', err);
+        );
+      } catch (err) {
+        console.warn('Erro ao configurar listeners do Firestore:', err);
+      }
     }
 
     return () => {
+      ativo = false;
+      clearInterval(intervalId);
       if (unsubClientes) unsubClientes();
       if (unsubAgendamentos) unsubAgendamentos();
     };
-  }, [aliasesUnidade]);
+  }, [aliasesUnidade, unidadeLogada]);
 
   // ==========================================
   // 8. BANNERS PROMOCIONAIS
@@ -398,22 +489,24 @@ export default function PainelLavaJato({
     } else if (tipo === 'agendamento') {
       setAgendamentos(prev => prev.filter(item => item.id !== id));
       try {
+        await excluirAgendamentoServidor(id);
         if (db && !id.startsWith('17') && isNaN(Number(id))) {
           await deleteDoc(doc(db, 'agendamentos', id));
         }
       } catch (err) {
-        console.warn('Erro ao remover agendamento do Firestore:', err);
+        console.warn('Erro ao remover agendamento:', err);
       }
     } else if (tipo === 'checklist') {
       setChecklists(prev => prev.filter(item => item.id !== id));
     } else if (tipo === 'cliente') {
       setClientes(prev => prev.filter(item => item.id !== id));
       try {
+        await excluirClienteServidor(id);
         if (db && !id.startsWith('17') && isNaN(Number(id))) {
           await deleteDoc(doc(db, 'clientes', id));
         }
       } catch (err) {
-        console.warn('Erro ao remover cliente do Firestore:', err);
+        console.warn('Erro ao remover cliente:', err);
       }
     } else if (tipo === 'funcionario') {
       setFuncionarios(prev => prev.filter(item => item.id !== id));
@@ -498,7 +591,7 @@ export default function PainelLavaJato({
     mostrarToast(`Veículo ${novoItem.veiculo} adicionado na fila de lavagem!`, 'sucesso');
   };
 
-  // Pontos de Fidelidade
+  // Pontos de Fidelidade (Exclusivo do Administrador)
   const adicionarPontoCliente = async (id: string) => {
     const clienteAlvo = clientes.find(c => c.id === id);
     if (!clienteAlvo) return;
@@ -513,6 +606,7 @@ export default function PainelLavaJato({
     }
 
     try {
+      await atualizarPontosClienteServidor(id, novosPontos);
       if (db && !id.startsWith('17') && isNaN(Number(id))) {
         await updateDoc(doc(db, 'clientes', id), {
           pontosFidelidade: novosPontos,
@@ -520,7 +614,48 @@ export default function PainelLavaJato({
         });
       }
     } catch (err) {
-      console.warn('Erro ao atualizar pontos no Firestore:', err);
+      console.warn('Erro ao atualizar pontos:', err);
+    }
+  };
+
+  const removerPontoCliente = async (id: string) => {
+    const clienteAlvo = clientes.find(c => c.id === id);
+    if (!clienteAlvo) return;
+    const novosPontos = Math.max(0, clienteAlvo.pontos - 1);
+
+    setClientes(clientes.map(c => c.id === id ? { ...c, pontos: novosPontos } : c));
+    mostrarToast(`Ponto ajustado para ${clienteAlvo.nome}. Total: ${novosPontos}/10`, 'info');
+
+    try {
+      await atualizarPontosClienteServidor(id, novosPontos);
+      if (db && !id.startsWith('17') && isNaN(Number(id))) {
+        await updateDoc(doc(db, 'clientes', id), {
+          pontosFidelidade: novosPontos,
+          pontos: novosPontos
+        });
+      }
+    } catch (err) {
+      console.warn('Erro ao atualizar pontos:', err);
+    }
+  };
+
+  const zerarPontosCliente = async (id: string) => {
+    const clienteAlvo = clientes.find(c => c.id === id);
+    if (!clienteAlvo) return;
+
+    setClientes(clientes.map(c => c.id === id ? { ...c, pontos: 0 } : c));
+    mostrarToast(`Pontos de ${clienteAlvo.nome} zerados / resgatados!`, 'info');
+
+    try {
+      await atualizarPontosClienteServidor(id, 0);
+      if (db && !id.startsWith('17') && isNaN(Number(id))) {
+        await updateDoc(doc(db, 'clientes', id), {
+          pontosFidelidade: 0,
+          pontos: 0
+        });
+      }
+    } catch (err) {
+      console.warn('Erro ao zerar pontos:', err);
     }
   };
 
@@ -539,7 +674,7 @@ export default function PainelLavaJato({
       await adicionarPontoCliente(clienteExistente.id);
     } else {
       const emailGerado = `${ag.cliente.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
-      const tempId = String(Date.now());
+      const tempId = `cli_${Date.now()}`;
       const novoCli: ClienteFidelidade = {
         id: tempId,
         nome: ag.cliente,
@@ -553,6 +688,25 @@ export default function PainelLavaJato({
       setClientes([novoCli, ...clientes]);
 
       try {
+        await registrarClienteServidor({
+          id: tempId,
+          nome: novoCli.nome,
+          email: emailGerado,
+          senhaAcesso: '123456',
+          contato: novoCli.telefone,
+          telefone: novoCli.telefone,
+          modelo: novoCli.veiculoPrincipal,
+          veiculoPrincipal: novoCli.veiculoPrincipal,
+          placa: '',
+          unidadeVinculadaId: unidadeLogada,
+          unidadeId: unidadeLogada,
+          unidadeNome: unidadeNome,
+          unidadeSlug: unidadeLogada,
+          pontosFidelidade: 1,
+          pontos: 1,
+          createdAt: new Date().toISOString()
+        });
+
         if (db) {
           await addDoc(collection(db, 'clientes'), {
             nome: novoCli.nome,
@@ -573,7 +727,7 @@ export default function PainelLavaJato({
           });
         }
       } catch (e) {
-        console.warn('Erro ao gravar cliente pontuado no Firestore:', e);
+        console.warn('Erro ao gravar cliente pontuado:', e);
       }
 
       mostrarToast(`🎉 +1 Ponto Fidelidade creditado para ${ag.cliente}!`, 'sucesso');
@@ -585,19 +739,20 @@ export default function PainelLavaJato({
     setAgendamentos((prev) => prev.map((a) => (a.id === id ? { ...a, status: novoStatus } : a)));
 
     try {
+      await atualizarStatusAgendamentoServidor(id, novoStatus);
       if (db && !id.startsWith('17') && isNaN(Number(id))) {
         await updateDoc(doc(db, 'agendamentos', id), {
           status: novoStatus
         });
       }
     } catch (e) {
-      console.warn('Erro ao atualizar status do agendamento no Firestore:', e);
+      console.warn('Erro ao atualizar status do agendamento:', e);
     }
 
     mostrarToast(`Agendamento atualizado para "${novoStatus}"!`, 'sucesso');
   };
 
-  // Cadastrar Cliente Fidelidade
+  // Cadastrar Cliente Fidelidade (Começa estritamente com 0 Pontos)
   const handleCadastrarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoCliNome.trim()) {
@@ -606,14 +761,15 @@ export default function PainelLavaJato({
     }
 
     const emailLimpo = novoCliEmail.trim() || `${novoCliNome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
-    const tempId = String(Date.now());
+    const tempId = `cli_${Date.now()}`;
     const novoCli: ClienteFidelidade = {
       id: tempId,
       nome: novoCliNome.trim(),
       email: emailLimpo,
       telefone: novoCliTel.trim() || 'Não informado',
       veiculoPrincipal: novoCliVeiculo.trim() || 'Não informado',
-      pontos: 1
+      pontos: 0,
+      totalGasto: 0
     };
 
     setClientes([novoCli, ...clientes]);
@@ -623,6 +779,25 @@ export default function PainelLavaJato({
     setNovoCliVeiculo('');
 
     try {
+      await registrarClienteServidor({
+        id: tempId,
+        nome: novoCli.nome,
+        email: emailLimpo,
+        senhaAcesso: '123456',
+        contato: novoCli.telefone,
+        telefone: novoCli.telefone,
+        modelo: novoCli.veiculoPrincipal,
+        veiculoPrincipal: novoCli.veiculoPrincipal,
+        placa: '',
+        unidadeVinculadaId: unidadeLogada,
+        unidadeId: unidadeLogada,
+        unidadeNome: unidadeNome,
+        unidadeSlug: unidadeLogada,
+        pontosFidelidade: 0,
+        pontos: 0,
+        createdAt: new Date().toISOString()
+      });
+
       if (db) {
         await addDoc(collection(db, 'clientes'), {
           nome: novoCli.nome,
@@ -637,16 +812,16 @@ export default function PainelLavaJato({
           unidadeId: unidadeLogada,
           unidadeNome: unidadeNome,
           unidadeSlug: unidadeLogada,
-          pontosFidelidade: 1,
-          pontos: 1,
+          pontosFidelidade: 0,
+          pontos: 0,
           createdAt: new Date().toISOString()
         });
       }
     } catch (err) {
-      console.warn('Cliente salvo localmente (Firestore offline/não configurado):', err);
+      console.warn('Cliente salvo localmente:', err);
     }
 
-    mostrarToast(`Cliente ${novoCli.nome} (${emailLimpo}) cadastrado com sucesso!`, 'sucesso');
+    mostrarToast(`Cliente ${novoCli.nome} (${emailLimpo}) cadastrado com sucesso (0 pontos)!`, 'sucesso');
   };
 
   // Cadastro de Funcionário
@@ -764,7 +939,7 @@ export default function PainelLavaJato({
       return;
     }
 
-    const tempId = String(Date.now());
+    const tempId = `ag_${Date.now()}`;
     const novo: AgendamentoPWA = {
       id: tempId,
       cliente: novoAgendCliente.trim(),
@@ -782,6 +957,20 @@ export default function PainelLavaJato({
     setNovoAgendTel('');
 
     try {
+      await salvarAgendamentoServidor({
+        id: tempId,
+        unidadeId: unidadeLogada,
+        unidadeVinculadaId: unidadeLogada,
+        cliente: novo.cliente,
+        telefone: novo.telefone,
+        veiculo: novo.veiculo,
+        servico: novo.servico,
+        data: novo.data,
+        horario: novo.horario,
+        status: novo.status,
+        createdAt: new Date().toISOString()
+      });
+
       if (db) {
         await addDoc(collection(db, 'agendamentos'), {
           unidadeId: unidadeLogada,
@@ -797,7 +986,7 @@ export default function PainelLavaJato({
         });
       }
     } catch (err) {
-      console.warn('Agendamento salvo localmente (Firestore offline/não configurado):', err);
+      console.warn('Agendamento salvo localmente:', err);
     }
 
     mostrarToast(`Agendamento de ${novo.cliente} confirmado para as ${novo.horario}!`, 'sucesso');
@@ -1733,15 +1922,39 @@ export default function PainelLavaJato({
                             </div>
                           </div>
 
-                          {/* Botão de Adicionar Ponto */}
-                          <button
-                            type="button"
-                            onClick={() => adicionarPontoCliente(c.id)}
-                            className="w-full py-2 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-white border border-amber-500/30 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Sparkles size={14} className="text-amber-400" />
-                            <span>+1 Ponto Fidelidade</span>
-                          </button>
+                          {/* Botões de Gestão de Pontos pelo Administrador */}
+                          <div className="grid grid-cols-3 gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => removerPontoCliente(c.id)}
+                              disabled={c.pontos <= 0}
+                              className="py-2 px-2 bg-slate-800/80 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 border border-slate-700 rounded-xl text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                              title="Remover 1 ponto"
+                            >
+                              <Minus size={13} />
+                              <span>-1</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => adicionarPontoCliente(c.id)}
+                              className="py-2 px-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white border border-amber-500/40 rounded-xl text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
+                              title="Adicionar 1 ponto de fidelidade"
+                            >
+                              <Sparkles size={13} className="text-amber-400" />
+                              <span>+1 Ponto</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => zerarPontosCliente(c.id)}
+                              className="py-2 px-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl text-[10px] font-semibold transition flex items-center justify-center gap-1 cursor-pointer"
+                              title="Zerar pontos / Registrar resgate de lavagem grátis"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Zerar</span>
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

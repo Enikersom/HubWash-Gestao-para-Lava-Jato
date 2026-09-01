@@ -14,18 +14,19 @@ import {
   CheckCircle2, 
   Eye, 
   EyeOff, 
-  QrCode,
-  ExternalLink,
-  DollarSign,
-  AlertTriangle,
-  Clock,
-  Copy,
-  Check,
-  ArrowLeft,
-  Download,
-  X,
-  Database,
-  RefreshCw
+  QrCode, 
+  ExternalLink, 
+  DollarSign, 
+  AlertTriangle, 
+  Clock, 
+  Copy, 
+  Check, 
+  ArrowLeft, 
+  Download, 
+  X, 
+  Database, 
+  RefreshCw,
+  UserPlus
 } from 'lucide-react';
 import { LavaJato } from '../types';
 import { URL_BASE_NETLIFY } from '../App';
@@ -33,7 +34,7 @@ import { URL_BASE_NETLIFY } from '../App';
 interface AdminMasterProps {
   onLogout?: () => void;
   onIrParaLavaJato?: (nome?: string) => void;
-  onIrParaCliente?: (nome?: string) => void;
+  onIrParaCliente?: (nome?: string, tela?: 'cadastro' | 'login' | 'home') => void;
 }
 
 export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaCliente }: AdminMasterProps) {
@@ -299,7 +300,7 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
               <h3 className="text-base font-bold text-white">QR Code do App Cliente</h3>
               <p className="text-xs text-blue-300 font-semibold">{qrCodeModal.nome}</p>
               <p className="text-[11px] text-slate-400">
-                Seus clientes escaneiam este código para agendar serviços e ver pontos fidelidade.
+                Ao ler este QR Code, o cliente é direcionado diretamente para o <strong className="text-blue-300">Cadastro</strong> no {qrCodeModal.nome}.
               </p>
             </div>
 
@@ -313,11 +314,25 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
               />
             </div>
 
-            {/* LINK DO CLIENTE E BOTÃO COPIAR */}
-            <div className="space-y-2">
-              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] font-mono text-cyan-300 break-all select-all">
+            {/* LINK DO CLIENTE E BOTÕES */}
+            <div className="space-y-2.5">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] font-mono text-cyan-300 break-all select-all text-left">
                 {qrCodeModal.link}
               </div>
+
+              {onIrParaCliente && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQrCodeModal({ visivel: false, link: '', nome: '' });
+                    onIrParaCliente(qrCodeModal.nome, 'cadastro');
+                  }}
+                  className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30"
+                >
+                  <UserPlus size={14} />
+                  <span>Abrir Tela de Cadastro Desta Unidade</span>
+                </button>
+              )}
 
               <div className="flex gap-2">
                 <button
@@ -724,12 +739,23 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
                           {/* AÇÕES */}
                           <td className="p-3.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
+                              {onIrParaCliente && (
+                                <button
+                                  type="button"
+                                  onClick={() => onIrParaCliente(lj.nomeFantasia, 'cadastro')}
+                                  className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border border-blue-500/20 transition cursor-pointer"
+                                  title="Abrir Tela de Cadastro de Cliente deste lava-jato"
+                                >
+                                  <UserPlus size={13} />
+                                </button>
+                              )}
+
                               {onIrParaLavaJato && (
                                 <button
                                   type="button"
                                   onClick={() => onIrParaLavaJato(lj.nomeFantasia)}
                                   className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition cursor-pointer"
-                                  title="Acessar painel deste lava-jato"
+                                  title="Acessar painel operacional deste lava-jato"
                                 >
                                   <ExternalLink size={13} />
                                 </button>
@@ -739,7 +765,7 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
                                 type="button"
                                 onClick={() => copiarLinkAcesso(lj.id)}
                                 className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-700 transition cursor-pointer"
-                                title="Copiar Link de Acesso do Cliente"
+                                title="Copiar Link de Cadastro do Cliente"
                               >
                                 {copiadoId === lj.id ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
                               </button>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Menu,
   ChevronLeft,
@@ -37,9 +37,15 @@ import {
   Sparkles,
   ShieldCheck,
   Building2,
-  ArrowLeft
+  ArrowLeft,
+  QrCode,
+  Copy,
+  Download,
+  X,
+  UserPlus
 } from 'lucide-react';
 import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where, orderBy } from '../firebase';
+import { URL_BASE_NETLIFY } from '../App';
 import {
   ItemFila,
   Funcionario,
@@ -200,14 +206,59 @@ export default function PainelLavaJato({
     localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(agendamentos));
   }, [agendamentos]);
 
-  // Helper para identificar a unidade logada padronizada (slug)
-  const unidadeLogada = (unidadeNome || 'pitstop')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'pitstop';
+  // Helper para identificar a unidade logada padronizada e todos os seus apelidos/slugs
+  const aliasesUnidade = useMemo(() => {
+    const aliases = new Set<string>();
+    const limpo = (unidadeNome || 'pitstop').trim().toLowerCase();
+    aliases.add(limpo);
+    
+    const semAcento = limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    aliases.add(semAcento);
+    
+    const slugComTraco = semAcento.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    aliases.add(slugComTraco);
+    
+    const slugSemTraco = semAcento.replace(/[^a-z0-9]/g, '');
+    aliases.add(slugSemTraco);
+
+    try {
+      const salvos = localStorage.getItem('hubwash_lava_jatos');
+      if (salvos) {
+        const lista = JSON.parse(salvos);
+        if (Array.isArray(lista)) {
+          const encontrada = lista.find((u: any) => 
+            String(u.id).toLowerCase() === limpo || 
+            String(u.nomeFantasia).toLowerCase() === limpo ||
+            String(u.id).toLowerCase() === slugComTraco ||
+            String(u.id).toLowerCase() === slugSemTraco
+          );
+          if (encontrada) {
+            if (encontrada.id) aliases.add(String(encontrada.id).toLowerCase());
+            if (encontrada.nomeFantasia) aliases.add(String(encontrada.nomeFantasia).toLowerCase());
+          }
+        }
+      }
+    } catch {}
+
+    return Array.from(aliases).filter(Boolean);
+  }, [unidadeNome]);
+
+  const unidadeLogada = aliasesUnidade[0] || 'pitstop';
+
+  // Modal de QR Code do Balcão para Cadastro de Clientes
+  const [modalQrCode, setModalQrCode] = useState(false);
+  const [copiadoQrLink, setCopiadoQrLink] = useState(false);
+
+  const linkQrCodeCliente = typeof window !== 'undefined' && window.location.origin.includes('netlify.app')
+    ? `${window.location.origin}/?unidade=${unidadeLogada}&rota=cadastro`
+    : `${URL_BASE_NETLIFY}/?unidade=${unidadeLogada}&rota=cadastro`;
+
+  const copiarLinkQrCode = () => {
+    navigator.clipboard.writeText(linkQrCodeCliente);
+    setCopiadoQrLink(true);
+    mostrarToast('Link de cadastro de clientes copiado com sucesso!', 'sucesso');
+    setTimeout(() => setCopiadoQrLink(false), 2000);
+  };
 
   // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE (CLIENTES E AGENDAMENTOS)
   useEffect(() => {
@@ -217,11 +268,8 @@ export default function PainelLavaJato({
     let unsubAgendamentos: (() => void) | null = null;
 
     try {
-      // 1. Ouvir coleção 'clientes' em tempo real filtrada pela unidade logada
-      const qClientes = query(
-        collection(db, 'clientes'),
-        where('unidadeVinculadaId', '==', unidadeLogada)
-      );
+      // 1. Ouvir coleção 'clientes' em tempo real
+      const qClientes = query(collection(db, 'clientes'));
 
       unsubClientes = onSnapshot(
         qClientes,
@@ -229,32 +277,47 @@ export default function PainelLavaJato({
           const clientesFirestore: ClienteFidelidade[] = [];
           snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
-            const veiculoFormatado = data.modelo
-              ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
-              : data.veiculoPrincipal || 'Veículo Cadastrado';
+            const docUnidade = String(data.unidadeVinculadaId || data.unidadeId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+            
+            const pertence = !docUnidade || aliasesUnidade.some(alias => 
+              docUnidade === alias || 
+              docUnidade.includes(alias) || 
+              alias.includes(docUnidade)
+            );
 
-            clientesFirestore.push({
-              id: docSnap.id,
-              nome: data.nome || 'Cliente',
-              email: data.email || (data.nome ? `${data.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : ''),
-              telefone: data.contato || data.telefone || '(11) 99999-0000',
-              veiculoPrincipal: veiculoFormatado,
-              pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 1),
-              totalGasto: data.totalGasto || 0
-            });
+            if (pertence) {
+              const veiculoFormatado = data.modelo
+                ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
+                : (data.veiculoPrincipal || (data.placa ? `Placa: ${data.placa}` : 'Veículo Cadastrado'));
+
+              clientesFirestore.push({
+                id: docSnap.id,
+                nome: data.nome || 'Cliente',
+                email: data.email || (data.nome ? `${data.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : ''),
+                telefone: data.contato || data.telefone || '(11) 99999-0000',
+                veiculoPrincipal: veiculoFormatado,
+                pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 1),
+                totalGasto: data.totalGasto || 0
+              });
+            }
           });
-          setClientes(clientesFirestore);
+
+          if (clientesFirestore.length > 0) {
+            setClientes((prev) => {
+              const mapa = new Map<string, ClienteFidelidade>();
+              prev.forEach((c) => mapa.set(c.id, c));
+              clientesFirestore.forEach((c) => mapa.set(c.id, c));
+              return Array.from(mapa.values());
+            });
+          }
         },
         (error: any) => {
           console.warn('Firestore onSnapshot clientes (Painel):', error);
         }
       );
 
-      // 2. Ouvir coleção 'agendamentos' em tempo real filtrada pela unidade logada
-      const qAgendamentos = query(
-        collection(db, 'agendamentos'),
-        where('unidadeId', '==', unidadeLogada)
-      );
+      // 2. Ouvir coleção 'agendamentos' em tempo real
+      const qAgendamentos = query(collection(db, 'agendamentos'));
 
       unsubAgendamentos = onSnapshot(
         qAgendamentos,
@@ -262,18 +325,37 @@ export default function PainelLavaJato({
           const agendamentosFirestore: AgendamentoPWA[] = [];
           snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
-            agendamentosFirestore.push({
-              id: docSnap.id,
-              cliente: data.cliente || 'Cliente App',
-              telefone: data.telefone || '(11) 99999-0000',
-              veiculo: data.veiculo || 'Veículo Agendado',
-              servico: data.servico || 'Lavagem Completa',
-              data: data.data || 'Hoje',
-              horario: data.horario || '12:00',
-              status: (data.status as any) || 'Pendente'
-            });
+            const docUnidade = String(data.unidadeId || data.unidadeVinculadaId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+            
+            const pertence = !docUnidade || aliasesUnidade.some(alias => 
+              docUnidade === alias || 
+              docUnidade.includes(alias) || 
+              alias.includes(docUnidade)
+            );
+
+            if (pertence) {
+              const veiculoFormatado = data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo Agendado');
+              agendamentosFirestore.push({
+                id: docSnap.id,
+                cliente: data.cliente || data.nome || 'Cliente App',
+                telefone: data.telefone || data.contato || '(11) 99999-0000',
+                veiculo: veiculoFormatado,
+                servico: data.servico || 'Lavagem Completa',
+                data: data.data || 'Hoje',
+                horario: data.horario || '12:00',
+                status: (data.status as any) || 'Pendente'
+              });
+            }
           });
-          setAgendamentos(agendamentosFirestore);
+
+          if (agendamentosFirestore.length > 0) {
+            setAgendamentos((prev) => {
+              const mapa = new Map<string, AgendamentoPWA>();
+              prev.forEach((a) => mapa.set(a.id, a));
+              agendamentosFirestore.forEach((a) => mapa.set(a.id, a));
+              return Array.from(mapa.values());
+            });
+          }
         },
         (error: any) => {
           console.warn('Firestore onSnapshot agendamentos (Painel):', error);
@@ -287,7 +369,7 @@ export default function PainelLavaJato({
       if (unsubClientes) unsubClientes();
       if (unsubAgendamentos) unsubAgendamentos();
     };
-  }, [unidadeLogada]);
+  }, [aliasesUnidade]);
 
   // ==========================================
   // 8. BANNERS PROMOCIONAIS
@@ -442,6 +524,79 @@ export default function PainelLavaJato({
     }
   };
 
+  // Pontuar cliente diretamente pelo agendamento recebido
+  const handlePontuarAgendamento = async (ag: AgendamentoPWA) => {
+    const termoNome = ag.cliente.trim().toLowerCase();
+    const termoTel = ag.telefone.replace(/\D/g, '');
+
+    const clienteExistente = clientes.find(
+      (c) =>
+        c.nome.trim().toLowerCase() === termoNome ||
+        (termoTel.length >= 8 && c.telefone.replace(/\D/g, '').includes(termoTel))
+    );
+
+    if (clienteExistente) {
+      await adicionarPontoCliente(clienteExistente.id);
+    } else {
+      const emailGerado = `${ag.cliente.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
+      const tempId = String(Date.now());
+      const novoCli: ClienteFidelidade = {
+        id: tempId,
+        nome: ag.cliente,
+        email: emailGerado,
+        telefone: ag.telefone,
+        veiculoPrincipal: ag.veiculo,
+        pontos: 1,
+        totalGasto: 0
+      };
+
+      setClientes([novoCli, ...clientes]);
+
+      try {
+        if (db) {
+          await addDoc(collection(db, 'clientes'), {
+            nome: novoCli.nome,
+            email: emailGerado,
+            senhaAcesso: '123456',
+            contato: novoCli.telefone,
+            telefone: novoCli.telefone,
+            modelo: novoCli.veiculoPrincipal,
+            veiculoPrincipal: novoCli.veiculoPrincipal,
+            placa: '',
+            unidadeVinculadaId: unidadeLogada,
+            unidadeId: unidadeLogada,
+            unidadeNome: unidadeNome,
+            unidadeSlug: unidadeLogada,
+            pontosFidelidade: 1,
+            pontos: 1,
+            createdAt: new Date().toISOString()
+          });
+        }
+      } catch (e) {
+        console.warn('Erro ao gravar cliente pontuado no Firestore:', e);
+      }
+
+      mostrarToast(`🎉 +1 Ponto Fidelidade creditado para ${ag.cliente}!`, 'sucesso');
+    }
+  };
+
+  // Atualizar Status do Agendamento
+  const handleAtualizarStatusAgendamento = async (id: string, novoStatus: 'Pendente' | 'Confirmado' | 'Concluido' | 'Cancelado') => {
+    setAgendamentos((prev) => prev.map((a) => (a.id === id ? { ...a, status: novoStatus } : a)));
+
+    try {
+      if (db && !id.startsWith('17') && isNaN(Number(id))) {
+        await updateDoc(doc(db, 'agendamentos', id), {
+          status: novoStatus
+        });
+      }
+    } catch (e) {
+      console.warn('Erro ao atualizar status do agendamento no Firestore:', e);
+    }
+
+    mostrarToast(`Agendamento atualizado para "${novoStatus}"!`, 'sucesso');
+  };
+
   // Cadastrar Cliente Fidelidade
   const handleCadastrarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -474,11 +629,16 @@ export default function PainelLavaJato({
           email: emailLimpo,
           senhaAcesso: '123456',
           contato: novoCli.telefone,
+          telefone: novoCli.telefone,
           modelo: novoCli.veiculoPrincipal,
+          veiculoPrincipal: novoCli.veiculoPrincipal,
           placa: '',
           unidadeVinculadaId: unidadeLogada,
           unidadeId: unidadeLogada,
+          unidadeNome: unidadeNome,
+          unidadeSlug: unidadeLogada,
           pontosFidelidade: 1,
+          pontos: 1,
           createdAt: new Date().toISOString()
         });
       }
@@ -735,6 +895,72 @@ export default function PainelLavaJato({
         </div>
       )}
 
+      {/* MODAL DE QR CODE DO BALCÃO (CADASTRO DIRETO DE CLIENTES) */}
+      {modalQrCode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-blue-500/40 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center relative">
+            <button 
+              type="button" 
+              onClick={() => setModalQrCode(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition cursor-pointer p-1 rounded-lg hover:bg-slate-800"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto">
+              <QrCode size={24} />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white">QR Code do Balcão</h3>
+              <p className="text-xs text-blue-300 font-semibold">{nomeLavaJato}</p>
+              <p className="text-[11px] text-slate-400">
+                Ao ler este QR Code, seus clientes abrem instantaneamente a <strong className="text-blue-300">Tela de Cadastro</strong> exclusiva do seu lava-jato.
+              </p>
+            </div>
+
+            {/* IMAGEM DO QR CODE */}
+            <div className="bg-white p-4 rounded-xl shadow-inner inline-block mx-auto border border-slate-700">
+              <img 
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(linkQrCodeCliente)}&margin=10`} 
+                alt={`QR Code ${nomeLavaJato}`}
+                className="w-48 h-48 mx-auto"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+
+            {/* LINK DO CLIENTE E BOTÕES */}
+            <div className="space-y-2.5">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] font-mono text-cyan-300 break-all select-all text-left">
+                {linkQrCodeCliente}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={copiarLinkQrCode}
+                  className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30"
+                >
+                  {copiadoQrLink ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                  <span>{copiadoQrLink ? 'Copiado!' : 'Copiar Link'}</span>
+                </button>
+
+                <a
+                  href={`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(linkQrCodeCliente)}&margin=10`}
+                  target="_blank"
+                  rel="noreferrer"
+                  download={`qrcode-balcao-${unidadeLogada}.png`}
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold rounded-xl border border-slate-700 transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Download size={14} />
+                  <span>Baixar</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MENUBAR LATERAL RECOLHÍVEL (SIDEBAR) */}
       <aside className={`bg-slate-900 border-r border-slate-800 flex flex-col justify-between transition-all duration-300 relative z-30 shrink-0 ${sidebarAberta ? 'w-64' : 'w-20'}`}>
         <div>
@@ -829,6 +1055,17 @@ export default function PainelLavaJato({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* BOTÃO QR CODE DO BALCÃO */}
+            <button
+              type="button"
+              onClick={() => setModalQrCode(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 border border-blue-500/30 text-xs font-semibold transition cursor-pointer shadow-sm shadow-blue-950/50"
+              title="Gerar e Ver QR Code do Balcão para Cadastro de Clientes"
+            >
+              <QrCode size={14} />
+              <span className="hidden sm:inline">QR Code de Cadastro</span>
+            </button>
+
             {/* BOTÃO DE RETORNO AO LOGIN SEMPRE ATIVO NO TOPO */}
             <button
               type="button"
@@ -1142,7 +1379,7 @@ export default function PainelLavaJato({
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
                         <button
                           type="button"
                           onClick={() => {
@@ -1152,10 +1389,37 @@ export default function PainelLavaJato({
                             setAbaAtiva('fila');
                             mostrarToast(`Dados de ${ag.cliente} carregados na Fila de Lavagem!`, 'info');
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                          className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                          title="Carregar na Fila de Lavagem"
                         >
                           <Play size={13} />
                           <span>Puxar p/ Fila</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handlePontuarAgendamento(ag)}
+                          className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                          title="Enviar +1 Ponto de Fidelidade para o Cliente"
+                        >
+                          <Sparkles size={13} className="text-amber-400" />
+                          <span>+1 Ponto</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleAtualizarStatusAgendamento(ag.id, ag.status === 'Confirmado' ? 'Concluido' : 'Confirmado')}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            ag.status === 'Concluido'
+                              ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30'
+                              : ag.status === 'Confirmado'
+                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                          }`}
+                          title="Alterar Status"
+                        >
+                          <CheckCircle2 size={13} />
+                          <span>{ag.status === 'Confirmado' ? 'Concluir' : ag.status === 'Concluido' ? 'Concluído' : 'Confirmar'}</span>
                         </button>
 
                         <button
@@ -1306,6 +1570,43 @@ export default function PainelLavaJato({
           {/* ========================================== */}
           {abaAtiva === 'clientes' && (
             <div className="space-y-6">
+              {/* Card Banner do QR Code de Auto-Cadastro */}
+              <div className="bg-gradient-to-r from-blue-950/60 to-cyan-950/60 border border-blue-500/30 rounded-2xl p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/40 text-blue-400 flex items-center justify-center shrink-0">
+                    <QrCode size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                      QR Code de Auto-Cadastro no Balcão
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">100% Automático</span>
+                    </h4>
+                    <p className="text-xs text-slate-300">
+                      Disponibilize o QR Code impresso no balcão para que os clientes realizem o auto-cadastro direto no celular e ganhem pontos fidelidade.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setModalQrCode(true)}
+                    className="flex-1 sm:flex-none py-2 px-4 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <QrCode size={14} />
+                    <span>Visualizar QR Code</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={copiarLinkQrCode}
+                    className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 rounded-xl transition cursor-pointer"
+                    title="Copiar Link de Cadastro"
+                  >
+                    {copiadoQrLink ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+
               {/* Topo com Cadastro de Cliente */}
               <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">

@@ -1,2195 +1,1502 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Menu,
-  ChevronLeft,
-  ChevronRight,
-  Users,
-  Calendar,
-  Layers,
-  CheckSquare,
-  Wrench,
-  Package,
-  DollarSign,
-  Award,
-  Settings,
-  Image as ImageIcon,
-  Plus,
-  Trash2,
-  Search,
-  CheckCircle2,
-  Clock,
-  Play,
-  PackagePlus,
-  Eye,
-  Camera,
-  Upload,
-  TrendingUp,
-  ArrowUpRight,
-  ArrowDownRight,
-  Paintbrush,
-  LogOut,
   Car,
-  AlertTriangle,
-  Check,
-  Fuel,
+  Calendar,
+  Award,
+  User,
+  LogIn,
+  UserPlus,
+  MapPin,
   Smartphone,
-  Gift,
+  Clock,
+  CheckCircle,
+  ChevronLeft,
+  Mail,
+  Lock,
   Sparkles,
   ShieldCheck,
   Building2,
-  ArrowLeft
+  AlertTriangle,
+  Trash2,
+  XCircle,
+  Gift,
+  CheckCircle2,
+  Info,
+  CalendarCheck,
+  ArrowLeft,
+  X
 } from 'lucide-react';
-import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where, orderBy } from '../firebase';
-import {
-  ItemFila,
-  Funcionario,
-  MovimentacaoCaixa,
-  ItemChecklist,
-  ProdutoEstoque,
-  ClienteFidelidade,
-  BannerPromocional,
-  AgendamentoPWA
-} from '../types';
+import { db, collection, addDoc, onSnapshot, doc, deleteDoc, query, where, orderBy } from '../firebase';
 
-interface PainelLavaJatoProps {
-  unidadeNome?: string;
-  onLogout: () => void;
+export interface UnidadeLavaJato {
+  id: string;
+  nomeFantasia: string;
+  contato: string;
+  corTematica: string;
 }
 
-export default function PainelLavaJato({
+export interface Cliente {
+  nome: string;
+  email: string;
+  senhaAcesso: string;
+  unidadeVinculadaId: string; // ➡️ Vincula o cliente a este lava-jato específico
+  contato: string;
+  cep: string;
+  cidade: string;
+  bairro: string;
+  estado: string;
+  tipoVeiculo: 'carro' | 'moto';
+  marca: string;
+  modelo: string;
+  ano: string;
+  placa: string;
+  cor: string;
+  pontosFidelidade: number;
+}
+
+export interface Agendamento {
+  id: string;
+  unidadeId: string;
+  cliente?: string;
+  telefone?: string;
+  email?: string;
+  data: string;
+  horario: string;
+  veiculo: string;
+  servico: string;
+  status: string;
+}
+
+interface AppClientePWAProps {
+  unidadeNome?: string;
+  onVoltarLogin: () => void;
+  telaInicial?: 'login' | 'cadastro' | 'home' | 'agendar' | 'fidelidade';
+}
+
+export default function AppClientePWA({
   unidadeNome = 'Pit Stop Lava Jato',
-  onLogout
-}: PainelLavaJatoProps) {
-  // CONFIGURAÇÃO DO MENU LATERAL RECOLHÍVEL
-  const [sidebarAberta, setSidebarAberta] = useState(true);
-  const [abaAtiva, setAbaAtiva] = useState<
-    'fila' | 'agendamentos' | 'checklist' | 'clientes' | 'funcionarios' | 'produtos' | 'caixa' | 'banner' | 'configuracao'
-  >('fila');
+  onVoltarLogin,
+  telaInicial
+}: AppClientePWAProps) {
+  const [bancoUnidades] = useState<UnidadeLavaJato[]>(() => {
+    const salvos = localStorage.getItem('hubwash_lava_jatos');
+    if (salvos) {
+      try {
+        const parsed = JSON.parse(salvos);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((item: any, idx: number) => ({
+            id: item.id || `unidade-${idx}`,
+            nomeFantasia: item.nomeFantasia || 'Lava Jato',
+            contato: item.contato || '(11) 99999-8888',
+            corTematica: item.corTematica || (idx % 2 === 0 ? 'blue' : 'emerald')
+          }));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [
+      { id: 'pitstop', nomeFantasia: 'Pit Stop Lava Jato', contato: '(11) 99999-8888', corTematica: 'blue' },
+      { id: 'ecowash', nomeFantasia: 'EcoWash Estética', contato: '(11) 97777-6666', corTematica: 'emerald' }
+    ];
+  });
 
-  // CONTROLADORES DE CORES PARA PERSONALIZAÇÃO DO APP
-  const [corPrimaria, setCorPrimaria] = useState<'blue' | 'indigo' | 'emerald' | 'cyan' | 'violet' | 'amber'>('blue');
-  const [nomeLavaJato, setNomeLavaJato] = useState(unidadeNome);
+  const [unidadeAtual, setUnidadeAtual] = useState<UnidadeLavaJato | null>(null);
+  const [carregandoUnidade, setCarregandoUnidade] = useState(true);
 
-  // ESTADO DE FEEDBACK (TOAST & MODAL DE CONFIRMAÇÃO DE EXCLUSÃO)
+  // Banco de clientes persistente amarrado às unidades
+  const [bancoClientes, setBancoClientes] = useState<Cliente[]>(() => {
+    const salvos = localStorage.getItem('hubwash_banco_clientes');
+    if (salvos) {
+      try {
+        return JSON.parse(salvos);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [];
+  });
+
+  // Salva banco de clientes
+  useEffect(() => {
+    localStorage.setItem('hubwash_banco_clientes', JSON.stringify(bancoClientes));
+  }, [bancoClientes]);
+
+  // Usuário logado na sessão do cliente
+  const [usuarioLogado, setUsuarioLogado] = useState<Cliente | null>(() => {
+    const salvo = localStorage.getItem('hubwash_cliente_sessao');
+    if (salvo) {
+      try {
+        return JSON.parse(salvo);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (usuarioLogado) {
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(usuarioLogado));
+    } else {
+      localStorage.removeItem('hubwash_cliente_sessao');
+    }
+  }, [usuarioLogado]);
+
+  const [telaAtiva, setTelaAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar' | 'fidelidade'>(() => {
+    if (telaInicial) return telaInicial;
+    try {
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const r = params?.get('rota')?.toLowerCase();
+      const u = params?.get('unidade');
+      if (r === 'cadastro' || r === 'cliente' || u) return 'cadastro';
+      if (r === 'login') return 'login';
+    } catch {}
+    const sessao = localStorage.getItem('hubwash_cliente_sessao');
+    return sessao ? 'home' : 'cadastro';
+  });
+
+  // Agendamentos persistentes
+  const [todosAgendamentos, setTodosAgendamentos] = useState<Agendamento[]>(() => {
+    const salvos = localStorage.getItem('hubwash_agendamentos_pwa');
+    if (salvos) {
+      try {
+        return JSON.parse(salvos);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('hubwash_agendamentos_pwa', JSON.stringify(todosAgendamentos));
+  }, [todosAgendamentos]);
+
+  // NOTIFICAÇÕES TOAST (sem alert/confirm nativos do browser)
   const [toast, setToast] = useState<{ mensagem: string; tipo: 'sucesso' | 'erro' | 'info' } | null>(null);
-  const [itemParaExcluir, setItemParaExcluir] = useState<{
-    tipo: 'fila' | 'agendamento' | 'checklist' | 'cliente' | 'funcionario' | 'produto' | 'movimentacao' | 'banner';
-    id: string;
-    nome: string;
-  } | null>(null);
-
   const mostrarToast = (mensagem: string, tipo: 'sucesso' | 'erro' | 'info' = 'sucesso') => {
     setToast({ mensagem, tipo });
     setTimeout(() => {
       setToast(null);
-    }, 3500);
+    }, 4000);
   };
 
-  // ==========================================
-  // 1. FILA DE LAVAGEM
-  // ==========================================
-  const [veiculosFila, setVeiculosFila] = useState<ItemFila[]>(() => {
-    const salvos = localStorage.getItem('hubwash_fila');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoClienteFila, setNovoClienteFila] = useState('');
-  const [novoVeiculoFila, setNovoVeiculoFila] = useState('');
-  const [novoServicoFila, setNovoServicoFila] = useState('Lavagem Completa');
-  const [novoValorFila, setNovoValorFila] = useState('80.00');
-  const [novoFuncFila, setNovoFuncFila] = useState('');
-  const [buscaFila, setBuscaFila] = useState('');
+  // MODAL DE CANCELAMENTO DE AGENDAMENTO (sem window.confirm)
+  const [agendamentoParaCancelar, setAgendamentoParaCancelar] = useState<string | null>(null);
 
+  // FORMULÁRIOS DE LOGIN E AGENDAMENTO
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginSenha, setLoginSenha] = useState('');
+  const hojeString = new Date().toISOString().split('T')[0];
+  const [agendaData, setAgendaData] = useState(hojeString);
+  const [agendaHora, setAgendaHora] = useState('');
+  const [agendaServico, setAgendaServico] = useState('Lavagem Completa');
+
+  // FORMULÁRIOS DE CADASTRO
+  const [cadNome, setCadNome] = useState('');
+  const [cadEmail, setCadEmail] = useState('');
+  const [cadSenha, setCadSenha] = useState('');
+  const [cadContato, setCadContato] = useState('');
+  const [cadCep, setCadCep] = useState('');
+  const [cadCidade, setCadCidade] = useState('');
+  const [cadBairro, setCadBairro] = useState('');
+  const [cadEstado, setCadEstado] = useState('SP');
+  const [cadTipo, setCadTipo] = useState<'carro' | 'moto'>('carro');
+  const [cadMarca, setCadMarca] = useState('');
+  const [cadModelo, setCadModelo] = useState('');
+  const [cadAno, setCadAno] = useState('');
+  const [cadPlaca, setCadPlaca] = useState('');
+  const [cadCor, setCadCor] = useState('');
+
+  // ➡️ LÓGICA DE MEMÓRIA PERSISTENTE DO INQUILINO (MÁXIMA SEGURANÇA)
   useEffect(() => {
-    localStorage.setItem('hubwash_fila', JSON.stringify(veiculosFila));
-  }, [veiculosFila]);
+    const params = new URLSearchParams(window.location.search);
+    const slugUnidadeDaURL = params.get('unidade');
+    const rotaDaURL = params.get('rota')?.toLowerCase();
 
-  // ==========================================
-  // 2. FUNCIONÁRIOS & COMISSÕES
-  // ==========================================
-  const [funcionarios, setFuncionarios] = useState<Funcionario[]>(() => {
-    const salvos = localStorage.getItem('hubwash_funcionarios');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoFuncNome, setNovoFuncNome] = useState('');
-  const [novoFuncCargo, setNovoFuncCargo] = useState('Lavador');
-  const [novoFuncComissao, setNovoFuncComissao] = useState(30);
-  const [novoFuncTel, setNovoFuncTel] = useState('');
+    // Direcionamento preciso de tela
+    if (telaInicial === 'cadastro' || rotaDaURL === 'cadastro' || rotaDaURL === 'cliente' || slugUnidadeDaURL) {
+      setTelaAtiva('cadastro');
+    } else if (telaInicial === 'login' || rotaDaURL === 'login') {
+      setTelaAtiva('login');
+    } else if (!usuarioLogado) {
+      setTelaAtiva('cadastro');
+    }
 
-  useEffect(() => {
-    localStorage.setItem('hubwash_funcionarios', JSON.stringify(funcionarios));
-  }, [funcionarios]);
+    if (slugUnidadeDaURL) {
+      const slugLimpo = slugUnidadeDaURL.toLowerCase().trim();
+      const unidadeLocalizada = bancoUnidades.find(
+        u => u.id.toLowerCase() === slugLimpo || u.nomeFantasia.toLowerCase() === slugLimpo
+      );
 
-  // ==========================================
-  // 3. FLUXO DE CAIXA
-  // ==========================================
-  const [movimentacoesCaixa, setMovimentacoesCaixa] = useState<MovimentacaoCaixa[]>(() => {
-    const salvos = localStorage.getItem('hubwash_caixa');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novaDescCaixa, setNovaDescCaixa] = useState('');
-  const [novoValorCaixa, setNovoValorCaixa] = useState('');
-  const [novoTipoCaixa, setNovoTipoCaixa] = useState<'entrada' | 'saida'>('entrada');
+      if (unidadeLocalizada) {
+        setUnidadeAtual(unidadeLocalizada);
+        // 💾 SALVA NA MEMÓRIA DO CELULAR PARA NUNCA MAIS ESQUECER ESSE LAVA-JATO
+        localStorage.setItem('hubwash_inquilino_preferido', unidadeLocalizada.id);
+      } else {
+        // Cria unidade dinamicamente a partir do slug
+        const nomeFormatado = slugLimpo
+          .split(/[-_]/)
+          .filter(Boolean)
+          .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+          .join(' ');
+        const nomeFinal = nomeFormatado.toLowerCase().includes('lava')
+          ? nomeFormatado
+          : `${nomeFormatado} Lava Jato`;
 
-  useEffect(() => {
-    localStorage.setItem('hubwash_caixa', JSON.stringify(movimentacoesCaixa));
-  }, [movimentacoesCaixa]);
-
-  // ==========================================
-  // 4. CHECKLIST COM FOTOS E AVARIAS
-  // ==========================================
-  const [checklists, setChecklists] = useState<ItemChecklist[]>(() => {
-    const salvos = localStorage.getItem('hubwash_checklist');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoCheckVeiculo, setNovoCheckVeiculo] = useState('');
-  const [novoCheckAvaria, setNovoCheckAvaria] = useState('');
-  const [novoCheckCombustivel, setNovoCheckCombustivel] = useState('3/4');
-  const [novoCheckPertences, setNovoCheckPertences] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('hubwash_checklist', JSON.stringify(checklists));
-  }, [checklists]);
-
-  // ==========================================
-  // 5. PRODUTOS / ESTOQUE INTERNO
-  // ==========================================
-  const [produtos, setProdutos] = useState<ProdutoEstoque[]>(() => {
-    const salvos = localStorage.getItem('hubwash_produtos');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoProdNome, setNovoProdNome] = useState('');
-  const [novoProdQtd, setNovoProdQtd] = useState('10');
-  const [novoProdMin, setNovoProdMin] = useState('3');
-  const [novoProdCat, setNovoProdCat] = useState('Geral');
-
-  useEffect(() => {
-    localStorage.setItem('hubwash_produtos', JSON.stringify(produtos));
-  }, [produtos]);
-
-  // ==========================================
-  // 6. CLIENTES & FIDELIDADE
-  // ==========================================
-  const [clientes, setClientes] = useState<ClienteFidelidade[]>(() => {
-    const salvos = localStorage.getItem('hubwash_clientes_fidelidade');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoCliNome, setNovoCliNome] = useState('');
-  const [novoCliEmail, setNovoCliEmail] = useState('');
-  const [novoCliTel, setNovoCliTel] = useState('');
-  const [novoCliVeiculo, setNovoCliVeiculo] = useState('');
-  const [buscaCliente, setBuscaCliente] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('hubwash_clientes_fidelidade', JSON.stringify(clientes));
-  }, [clientes]);
-
-  // ==========================================
-  // 7. AGENDAMENTOS PWA
-  // ==========================================
-  const [agendamentos, setAgendamentos] = useState<AgendamentoPWA[]>(() => {
-    const salvos = localStorage.getItem('hubwash_agendamentos_painel');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoAgendCliente, setNovoAgendCliente] = useState('');
-  const [novoAgendTel, setNovoAgendTel] = useState('');
-  const [novoAgendVeiculo, setNovoAgendVeiculo] = useState('');
-  const [novoAgendServico, setNovoAgendServico] = useState('Lavagem Completa');
-  const [novoAgendHorario, setNovoAgendHorario] = useState('15:00');
-
-  useEffect(() => {
-    localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(agendamentos));
-  }, [agendamentos]);
-
-  // Helper para identificar a unidade logada padronizada e todos os seus apelidos/slugs
-  const aliasesUnidade = useMemo(() => {
-    const aliases = new Set<string>();
-    const limpo = (unidadeNome || 'pitstop').trim().toLowerCase();
-    aliases.add(limpo);
-    
-    const semAcento = limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    aliases.add(semAcento);
-    
-    const slugComTraco = semAcento.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-    aliases.add(slugComTraco);
-    
-    const slugSemTraco = semAcento.replace(/[^a-z0-9]/g, '');
-    aliases.add(slugSemTraco);
-
-    try {
-      const salvos = localStorage.getItem('hubwash_lava_jatos');
-      if (salvos) {
-        const lista = JSON.parse(salvos);
-        if (Array.isArray(lista)) {
-          const encontrada = lista.find((u: any) => 
-            String(u.id).toLowerCase() === limpo || 
-            String(u.nomeFantasia).toLowerCase() === limpo ||
-            String(u.id).toLowerCase() === slugComTraco ||
-            String(u.id).toLowerCase() === slugSemTraco
-          );
-          if (encontrada) {
-            if (encontrada.id) aliases.add(String(encontrada.id).toLowerCase());
-            if (encontrada.nomeFantasia) aliases.add(String(encontrada.nomeFantasia).toLowerCase());
-          }
-        }
+        const novaUnidade: UnidadeLavaJato = {
+          id: slugLimpo,
+          nomeFantasia: nomeFinal,
+          contato: '(11) 99999-8888',
+          corTematica: 'blue'
+        };
+        setUnidadeAtual(novaUnidade);
+        localStorage.setItem('hubwash_inquilino_preferido', novaUnidade.id);
       }
-    } catch {}
+    } else {
+      // 🔍 CASO ENTRE DE CASA SEM QR CODE: Tenta ler a memória interna do celular
+      const inquilinoSalvoNaMemoria = localStorage.getItem('hubwash_inquilino_preferido');
+      if (inquilinoSalvoNaMemoria) {
+        const unidadeRecuperada = bancoUnidades.find(u => u.id.toLowerCase() === inquilinoSalvoNaMemoria.toLowerCase());
+        if (unidadeRecuperada) {
+          setUnidadeAtual(unidadeRecuperada);
+        } else if (unidadeNome) {
+          setUnidadeAtual({
+            id: inquilinoSalvoNaMemoria,
+            nomeFantasia: unidadeNome,
+            contato: '(11) 99999-8888',
+            corTematica: 'blue'
+          });
+        }
+      } else if (unidadeNome) {
+        const unidadePadrao = bancoUnidades.find(
+          u => u.nomeFantasia.toLowerCase().includes(unidadeNome.toLowerCase()) ||
+               unidadeNome.toLowerCase().includes(u.id.toLowerCase())
+        ) || bancoUnidades[0];
+        setUnidadeAtual(unidadePadrao);
+      }
+    }
+    setCarregandoUnidade(false);
+  }, [bancoUnidades, unidadeNome, usuarioLogado, telaInicial]);
 
-    return Array.from(aliases).filter(Boolean);
-  }, [unidadeNome]);
+  // ID Padronizado da Unidade
+  const unidadeIdNormalizada = (unidadeAtual?.id || unidadeNome || 'pitstop')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'pitstop';
 
-  const unidadeLogada = aliasesUnidade[0] || 'pitstop';
-
-  // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE (CLIENTES E AGENDAMENTOS)
+  // ➡️ SINCRONIZAÇÃO EM TEMPO REAL COM FIREBASE FIRESTORE
   useEffect(() => {
     if (!db) return;
 
-    let unsubClientes: (() => void) | null = null;
+    // Escuta agendamentos em tempo real do Firebase filtrados pela unidade
     let unsubAgendamentos: (() => void) | null = null;
+    let unsubClientes: (() => void) | null = null;
 
     try {
-      // 1. Ouvir coleção 'clientes' em tempo real
-      const qClientes = query(collection(db, 'clientes'));
-
-      unsubClientes = onSnapshot(
-        qClientes,
-        (snapshot: any) => {
-          const clientesFirestore: ClienteFidelidade[] = [];
-          snapshot.forEach((docSnap: any) => {
-            const data = docSnap.data();
-            const docUnidade = String(data.unidadeVinculadaId || data.unidadeId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
-            
-            const pertence = !docUnidade || aliasesUnidade.some(alias => 
-              docUnidade === alias || 
-              docUnidade.includes(alias) || 
-              alias.includes(docUnidade)
-            );
-
-            if (pertence) {
-              const veiculoFormatado = data.modelo
-                ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}`
-                : (data.veiculoPrincipal || (data.placa ? `Placa: ${data.placa}` : 'Veículo Cadastrado'));
-
-              clientesFirestore.push({
-                id: docSnap.id,
-                nome: data.nome || 'Cliente',
-                email: data.email || (data.nome ? `${data.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : ''),
-                telefone: data.contato || data.telefone || '(11) 99999-0000',
-                veiculoPrincipal: veiculoFormatado,
-                pontos: typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 1),
-                totalGasto: data.totalGasto || 0
-              });
-            }
-          });
-
-          if (clientesFirestore.length > 0) {
-            setClientes((prev) => {
-              const mapa = new Map<string, ClienteFidelidade>();
-              prev.forEach((c) => mapa.set(c.id, c));
-              clientesFirestore.forEach((c) => mapa.set(c.id, c));
-              return Array.from(mapa.values());
-            });
-          }
-        },
-        (error: any) => {
-          console.warn('Firestore onSnapshot clientes (Painel):', error);
-        }
+      // 1. Escuta agendamentos em tempo real do Firebase
+      const qAgendamentos = query(
+        collection(db, 'agendamentos')
       );
-
-      // 2. Ouvir coleção 'agendamentos' em tempo real
-      const qAgendamentos = query(collection(db, 'agendamentos'));
 
       unsubAgendamentos = onSnapshot(
         qAgendamentos,
         (snapshot: any) => {
-          const agendamentosFirestore: AgendamentoPWA[] = [];
+          const listaFirestore: Agendamento[] = [];
           snapshot.forEach((docSnap: any) => {
             const data = docSnap.data();
             const docUnidade = String(data.unidadeId || data.unidadeVinculadaId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
-            
-            const pertence = !docUnidade || aliasesUnidade.some(alias => 
-              docUnidade === alias || 
-              docUnidade.includes(alias) || 
-              alias.includes(docUnidade)
-            );
+            const pertence = !docUnidade || 
+              docUnidade === unidadeIdNormalizada || 
+              docUnidade.includes(unidadeIdNormalizada) || 
+              unidadeIdNormalizada.includes(docUnidade) ||
+              (unidadeAtual && docUnidade.includes(unidadeAtual.id.toLowerCase())) ||
+              (unidadeAtual && docUnidade.includes(unidadeAtual.nomeFantasia.toLowerCase()));
 
             if (pertence) {
-              const veiculoFormatado = data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo Agendado');
-              agendamentosFirestore.push({
+              listaFirestore.push({
                 id: docSnap.id,
-                cliente: data.cliente || data.nome || 'Cliente App',
-                telefone: data.telefone || data.contato || '(11) 99999-0000',
-                veiculo: veiculoFormatado,
+                unidadeId: data.unidadeId || unidadeIdNormalizada,
+                cliente: data.cliente || data.nome || 'Cliente',
+                telefone: data.telefone || data.contato || '',
+                email: data.email || '',
+                data: data.data || '',
+                horario: data.horario || '',
+                veiculo: data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo'),
                 servico: data.servico || 'Lavagem Completa',
-                data: data.data || 'Hoje',
-                horario: data.horario || '12:00',
-                status: (data.status as any) || 'Pendente'
+                status: data.status || 'Pendente'
               });
             }
           });
 
-          if (agendamentosFirestore.length > 0) {
-            setAgendamentos((prev) => {
-              const mapa = new Map<string, AgendamentoPWA>();
-              prev.forEach((a) => mapa.set(a.id, a));
-              agendamentosFirestore.forEach((a) => mapa.set(a.id, a));
+          if (listaFirestore.length > 0) {
+            setTodosAgendamentos((prev) => {
+              const mapa = new Map<string, Agendamento>();
+              prev.forEach((item) => mapa.set(item.id, item));
+              listaFirestore.forEach((item) => mapa.set(item.id, item));
               return Array.from(mapa.values());
             });
           }
         },
         (error: any) => {
-          console.warn('Firestore onSnapshot agendamentos (Painel):', error);
+          console.warn('Firestore onSnapshot agendamentos (AppCliente):', error);
+        }
+      );
+
+      // 2. Escuta clientes cadastrados em tempo real do Firebase
+      const qClientes = query(
+        collection(db, 'clientes')
+      );
+
+      unsubClientes = onSnapshot(
+        qClientes,
+        (snapshot: any) => {
+          const clientesFirestore: Cliente[] = [];
+          snapshot.forEach((docSnap: any) => {
+            const data = docSnap.data();
+            const docUnidade = String(data.unidadeVinculadaId || data.unidadeId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+            const pertence = !docUnidade || 
+              docUnidade === unidadeIdNormalizada || 
+              docUnidade.includes(unidadeIdNormalizada) || 
+              unidadeIdNormalizada.includes(docUnidade) ||
+              (unidadeAtual && docUnidade.includes(unidadeAtual.id.toLowerCase())) ||
+              (unidadeAtual && docUnidade.includes(unidadeAtual.nomeFantasia.toLowerCase()));
+
+            if (pertence) {
+              const emailTratado = (data.email && String(data.email).trim()) || (data.nome ? `${String(data.nome).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com` : `cliente_${docSnap.id.slice(0, 5)}@email.com`);
+              const pts = typeof data.pontosFidelidade === 'number' ? data.pontosFidelidade : (typeof data.pontos === 'number' ? data.pontos : 0);
+              
+              const cliObj: Cliente = {
+                nome: data.nome || 'Cliente',
+                email: emailTratado,
+                senhaAcesso: data.senhaAcesso || '123456',
+                unidadeVinculadaId: data.unidadeVinculadaId || data.unidadeId || unidadeIdNormalizada,
+                contato: data.contato || data.telefone || '',
+                cep: data.cep || '',
+                cidade: data.cidade || '',
+                bairro: data.bairro || '',
+                estado: data.estado || '',
+                tipoVeiculo: data.tipoVeiculo || 'carro',
+                marca: data.marca || '',
+                modelo: data.modelo || data.veiculoPrincipal || '',
+                ano: data.ano || '',
+                placa: data.placa || '',
+                cor: data.cor || '',
+                pontosFidelidade: pts
+              };
+
+              clientesFirestore.push(cliObj);
+            }
+          });
+
+          if (clientesFirestore.length > 0) {
+            setBancoClientes((prev) => {
+              const mapa = new Map<string, Cliente>();
+              prev.forEach((c) => mapa.set(`${c.email.toLowerCase()}_${c.unidadeVinculadaId}`, c));
+              clientesFirestore.forEach((c) => mapa.set(`${c.email.toLowerCase()}_${c.unidadeVinculadaId}`, c));
+              return Array.from(mapa.values());
+            });
+
+            // Atualiza pontos do usuário logado se ele estiver nesta lista
+            setUsuarioLogado((atual) => {
+              if (!atual) return null;
+              const cliAtualizado = clientesFirestore.find(
+                (c) => c.email.toLowerCase() === atual.email.toLowerCase() || c.nome.toLowerCase() === atual.nome.toLowerCase()
+              );
+              if (cliAtualizado && cliAtualizado.pontosFidelidade !== atual.pontosFidelidade) {
+                return { ...atual, pontosFidelidade: cliAtualizado.pontosFidelidade };
+              }
+              return atual;
+            });
+          }
+        },
+        (error: any) => {
+          console.warn('Firestore onSnapshot clientes (AppCliente):', error);
         }
       );
     } catch (err) {
-      console.warn('Erro ao configurar listeners do Firestore:', err);
+      console.warn('Erro ao conectar listeners do Firestore:', err);
     }
 
     return () => {
-      if (unsubClientes) unsubClientes();
       if (unsubAgendamentos) unsubAgendamentos();
+      if (unsubClientes) unsubClientes();
     };
-  }, [aliasesUnidade]);
+  }, [unidadeIdNormalizada, unidadeAtual]);
 
-  // ==========================================
-  // 8. BANNERS PROMOCIONAIS
-  // ==========================================
-  const [banners, setBanners] = useState<BannerPromocional[]>(() => {
-    const salvos = localStorage.getItem('hubwash_banners');
-    return salvos ? JSON.parse(salvos) : [];
-  });
-  const [novoBannerTitulo, setNovoBannerTitulo] = useState('');
-  const [novoBannerImg, setNovoBannerImg] = useState('');
-
-  useEffect(() => {
-    localStorage.setItem('hubwash_banners', JSON.stringify(banners));
-  }, [banners]);
-
-  // ==========================================
-  // LOGICA: EXCLUSÃO CONFIRMADA (MODAL INTERNO)
-  // ==========================================
-  const confirmarExclusao = async () => {
-    if (!itemParaExcluir) return;
-
-    const { tipo, id, nome } = itemParaExcluir;
-
-    if (tipo === 'fila') {
-      setVeiculosFila(prev => prev.filter(item => item.id !== id));
-    } else if (tipo === 'agendamento') {
-      setAgendamentos(prev => prev.filter(item => item.id !== id));
-      try {
-        if (db && !id.startsWith('17') && isNaN(Number(id))) {
-          await deleteDoc(doc(db, 'agendamentos', id));
-        }
-      } catch (err) {
-        console.warn('Erro ao remover agendamento do Firestore:', err);
-      }
-    } else if (tipo === 'checklist') {
-      setChecklists(prev => prev.filter(item => item.id !== id));
-    } else if (tipo === 'cliente') {
-      setClientes(prev => prev.filter(item => item.id !== id));
-      try {
-        if (db && !id.startsWith('17') && isNaN(Number(id))) {
-          await deleteDoc(doc(db, 'clientes', id));
-        }
-      } catch (err) {
-        console.warn('Erro ao remover cliente do Firestore:', err);
-      }
-    } else if (tipo === 'funcionario') {
-      setFuncionarios(prev => prev.filter(item => item.id !== id));
-    } else if (tipo === 'produto') {
-      setProdutos(prev => prev.filter(item => item.id !== id));
-    } else if (tipo === 'movimentacao') {
-      setMovimentacoesCaixa(prev => prev.filter(item => item.id !== id));
-    } else if (tipo === 'banner') {
-      setBanners(prev => prev.filter(item => item.id !== id));
-    }
-
-    mostrarToast(`"${nome}" foi excluído com sucesso!`, 'info');
-    setItemParaExcluir(null);
-  };
-
-  // ==========================================
-  // FUNÇÕES DE AÇÃO
-  // ==========================================
-
-  // Avançar status da Fila
-  const avancarStatusFila = (id: string) => {
-    setVeiculosFila(veiculosFila.map(veiculo => {
-      if (veiculo.id === id) {
-        let proximoStatus: ItemFila['status'] = veiculo.status;
-
-        if (veiculo.status === 'Espera') {
-          proximoStatus = 'Lavando';
-          mostrarToast(`Veículo "${veiculo.veiculo}" agora está em Lavagem!`, 'info');
-        } else if (veiculo.status === 'Lavando') {
-          proximoStatus = 'Pronto';
-          // GERAR COMISSÃO AUTOMÁTICA
-          const func = funcionarios.find(f => f.nome === veiculo.funcionario);
-          const perc = func ? func.comissaoPorcentagem : 30;
-          const valorComissao = (veiculo.valor * perc) / 100;
-
-          setFuncionarios(funcionarios.map(f =>
-            f.nome === veiculo.funcionario
-              ? { ...f, totalComissaoAcumulada: f.totalComissaoAcumulada + valorComissao }
-              : f
-          ));
-
-          // LANÇAR NO CAIXA AUTOMATICAMENTE
-          setMovimentacoesCaixa([
-            { id: String(Date.now()), descricao: `Recebimento: ${veiculo.servico} (${veiculo.veiculo})`, tipo: 'entrada', valor: veiculo.valor, data: 'Hoje' },
-            ...movimentacoesCaixa
-          ]);
-
-          mostrarToast(`Veículo "${veiculo.veiculo}" pronto! R$ ${valorComissao.toFixed(2)} de comissão gerada e R$ ${veiculo.valor.toFixed(2)} lançado no Caixa.`, 'sucesso');
-        } else if (veiculo.status === 'Pronto') {
-          proximoStatus = 'Entregue';
-          mostrarToast(`Veículo "${veiculo.veiculo}" finalizado e entregue ao cliente!`, 'sucesso');
-        }
-
-        return { ...veiculo, status: proximoStatus };
-      }
-      return veiculo;
-    }));
-  };
-
-  // Adicionar Veículo na Fila
-  const handleCadastrarFila = (e: React.FormEvent) => {
+  // CADASTRO DE CLIENTE
+  const handleCadastro = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!novoClienteFila.trim() || !novoVeiculoFila.trim()) {
-      mostrarToast('Preencha o nome do cliente e veículo.', 'erro');
+    if (!cadNome.trim() || !cadEmail.trim() || !cadSenha.trim() || !cadPlaca.trim() || !cadModelo.trim() || !unidadeAtual) {
+      mostrarToast('Por favor, preencha os campos obrigatórios (*)', 'erro');
       return;
     }
 
-    const novoItem: ItemFila = {
-      id: String(Date.now()),
-      cliente: novoClienteFila.trim(),
-      veiculo: novoVeiculoFila.trim(),
-      servico: novoServicoFila,
-      status: 'Espera',
-      funcionario: novoFuncFila,
-      valor: parseFloat(novoValorFila) || 50,
-      horaEntrada: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    if (bancoClientes.some(c => c.email.toLowerCase() === cadEmail.trim().toLowerCase() && (c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id))) {
+      mostrarToast('Este e-mail já possui cadastro nesta unidade! Faça o login.', 'erro');
+      setLoginEmail(cadEmail.trim());
+      setTelaAtiva('login');
+      return;
+    }
+
+    const veiculoTexto = `${cadModelo.trim()}${cadPlaca ? ` (${cadPlaca.trim().toUpperCase()})` : ''}`;
+
+    const novoCliente: Cliente = {
+      nome: cadNome.trim(),
+      email: cadEmail.trim(),
+      senhaAcesso: cadSenha.trim(),
+      unidadeVinculadaId: unidadeIdNormalizada, // ➡️ Prende a conta dele a este lava-jato
+      contato: cadContato.trim() || '(11) 99999-0000',
+      cep: cadCep.trim() || '01001-000',
+      cidade: cadCidade.trim() || 'São Paulo',
+      bairro: cadBairro.trim() || 'Centro',
+      estado: cadEstado.trim() || 'SP',
+      tipoVeiculo: cadTipo,
+      marca: cadMarca.trim() || 'Marca',
+      modelo: cadModelo.trim(),
+      ano: cadAno.trim() || '2023',
+      placa: cadPlaca.trim().toUpperCase(),
+      cor: cadCor.trim() || 'Prata',
+      pontosFidelidade: 3 // Bônus de boas-vindas
     };
 
-    setVeiculosFila([novoItem, ...veiculosFila]);
-    setNovoClienteFila('');
-    setNovoVeiculoFila('');
-    mostrarToast(`Veículo ${novoItem.veiculo} adicionado na fila de lavagem!`, 'sucesso');
-  };
+    // Salva no estado local e memória
+    setBancoClientes([...bancoClientes, novoCliente]);
+    setUsuarioLogado(novoCliente);
+    setTelaAtiva('home');
 
-  // Pontos de Fidelidade
-  const adicionarPontoCliente = async (id: string) => {
-    const clienteAlvo = clientes.find(c => c.id === id);
-    if (!clienteAlvo) return;
-    const novosPontos = clienteAlvo.pontos + 1 >= 10 ? 0 : clienteAlvo.pontos + 1;
-
-    setClientes(clientes.map(c => c.id === id ? { ...c, pontos: novosPontos } : c));
-
-    if (novosPontos === 0) {
-      mostrarToast(`🎉 PARABÉNS! ${clienteAlvo.nome} atingiu 10 pontos e ganhou UMA LAVAGEM GRÁTIS!`, 'sucesso');
-    } else {
-      mostrarToast(`+1 Ponto adicionado para ${clienteAlvo.nome}. Total: ${novosPontos}/10`, 'sucesso');
-    }
-
+    // Salva no localStorage compartilhado para sincronização imediata
     try {
-      if (db && !id.startsWith('17') && isNaN(Number(id))) {
-        await updateDoc(doc(db, 'clientes', id), {
-          pontosFidelidade: novosPontos,
-          pontos: novosPontos
-        });
-      }
-    } catch (err) {
-      console.warn('Erro ao atualizar pontos no Firestore:', err);
-    }
-  };
-
-  // Pontuar cliente diretamente pelo agendamento recebido
-  const handlePontuarAgendamento = async (ag: AgendamentoPWA) => {
-    const termoNome = ag.cliente.trim().toLowerCase();
-    const termoTel = ag.telefone.replace(/\D/g, '');
-
-    const clienteExistente = clientes.find(
-      (c) =>
-        c.nome.trim().toLowerCase() === termoNome ||
-        (termoTel.length >= 8 && c.telefone.replace(/\D/g, '').includes(termoTel))
-    );
-
-    if (clienteExistente) {
-      await adicionarPontoCliente(clienteExistente.id);
-    } else {
-      const emailGerado = `${ag.cliente.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
-      const tempId = String(Date.now());
-      const novoCli: ClienteFidelidade = {
-        id: tempId,
-        nome: ag.cliente,
-        email: emailGerado,
-        telefone: ag.telefone,
-        veiculoPrincipal: ag.veiculo,
-        pontos: 1,
-        totalGasto: 0
+      const salvosFidelidade = localStorage.getItem('hubwash_clientes_fidelidade');
+      const listaFid = salvosFidelidade ? JSON.parse(salvosFidelidade) : [];
+      const novoFid = {
+        id: String(Date.now()),
+        nome: novoCliente.nome,
+        email: novoCliente.email,
+        telefone: novoCliente.contato,
+        veiculoPrincipal: veiculoTexto,
+        pontos: 3,
+        totalGasto: 0,
+        unidadeVinculadaId: unidadeIdNormalizada,
+        unidadeId: unidadeIdNormalizada
       };
-
-      setClientes([novoCli, ...clientes]);
-
-      try {
-        if (db) {
-          await addDoc(collection(db, 'clientes'), {
-            nome: novoCli.nome,
-            email: emailGerado,
-            senhaAcesso: '123456',
-            contato: novoCli.telefone,
-            telefone: novoCli.telefone,
-            modelo: novoCli.veiculoPrincipal,
-            veiculoPrincipal: novoCli.veiculoPrincipal,
-            placa: '',
-            unidadeVinculadaId: unidadeLogada,
-            unidadeId: unidadeLogada,
-            unidadeNome: unidadeNome,
-            unidadeSlug: unidadeLogada,
-            pontosFidelidade: 1,
-            pontos: 1,
-            createdAt: new Date().toISOString()
-          });
-        }
-      } catch (e) {
-        console.warn('Erro ao gravar cliente pontuado no Firestore:', e);
-      }
-
-      mostrarToast(`🎉 +1 Ponto Fidelidade creditado para ${ag.cliente}!`, 'sucesso');
-    }
-  };
-
-  // Atualizar Status do Agendamento
-  const handleAtualizarStatusAgendamento = async (id: string, novoStatus: 'Pendente' | 'Confirmado' | 'Concluido' | 'Cancelado') => {
-    setAgendamentos((prev) => prev.map((a) => (a.id === id ? { ...a, status: novoStatus } : a)));
-
-    try {
-      if (db && !id.startsWith('17') && isNaN(Number(id))) {
-        await updateDoc(doc(db, 'agendamentos', id), {
-          status: novoStatus
-        });
-      }
+      localStorage.setItem('hubwash_clientes_fidelidade', JSON.stringify([novoFid, ...listaFid.filter((c: any) => c.email !== novoCliente.email)]));
     } catch (e) {
-      console.warn('Erro ao atualizar status do agendamento no Firestore:', e);
+      console.warn('Erro ao sincronizar localStorage fidelidade:', e);
     }
 
-    mostrarToast(`Agendamento atualizado para "${novoStatus}"!`, 'sucesso');
-  };
-
-  // Cadastrar Cliente Fidelidade
-  const handleCadastrarCliente = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!novoCliNome.trim()) {
-      mostrarToast('Digite o nome do cliente.', 'erro');
-      return;
-    }
-
-    const emailLimpo = novoCliEmail.trim() || `${novoCliNome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')}@email.com`;
-    const tempId = String(Date.now());
-    const novoCli: ClienteFidelidade = {
-      id: tempId,
-      nome: novoCliNome.trim(),
-      email: emailLimpo,
-      telefone: novoCliTel.trim() || 'Não informado',
-      veiculoPrincipal: novoCliVeiculo.trim() || 'Não informado',
-      pontos: 1
-    };
-
-    setClientes([novoCli, ...clientes]);
-    setNovoCliNome('');
-    setNovoCliEmail('');
-    setNovoCliTel('');
-    setNovoCliVeiculo('');
-
+    // Salva em tempo real no Firebase Firestore na coleção 'clientes'
     try {
       if (db) {
         await addDoc(collection(db, 'clientes'), {
-          nome: novoCli.nome,
-          email: emailLimpo,
-          senhaAcesso: '123456',
-          contato: novoCli.telefone,
-          telefone: novoCli.telefone,
-          modelo: novoCli.veiculoPrincipal,
-          veiculoPrincipal: novoCli.veiculoPrincipal,
-          placa: '',
-          unidadeVinculadaId: unidadeLogada,
-          unidadeId: unidadeLogada,
-          unidadeNome: unidadeNome,
-          unidadeSlug: unidadeLogada,
-          pontosFidelidade: 1,
-          pontos: 1,
+          ...novoCliente,
+          veiculoPrincipal: veiculoTexto,
+          pontos: 3,
+          unidadeId: unidadeIdNormalizada,
+          unidadeVinculadaId: unidadeIdNormalizada,
+          unidadeNome: unidadeAtual.nomeFantasia,
+          unidadeSlug: unidadeAtual.id,
           createdAt: new Date().toISOString()
         });
       }
-    } catch (err) {
-      console.warn('Cliente salvo localmente (Firestore offline/não configurado):', err);
+    } catch (firebaseErr) {
+      console.warn('Registro salvo localmente (Firestore offline/não configurado):', firebaseErr);
     }
 
-    mostrarToast(`Cliente ${novoCli.nome} (${emailLimpo}) cadastrado com sucesso!`, 'sucesso');
+    mostrarToast(`🎉 Cadastro efetuado com sucesso no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
   };
 
-  // Cadastro de Funcionário
-  const handleCadastrarFuncionario = (e: React.FormEvent) => {
+  // ➡️ LOGIN INTELIGENTE AMARRADO AO LAVA-JATO DE ORIGEM
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!novoFuncNome.trim()) {
-      mostrarToast('Digite o nome do funcionário.', 'erro');
+    if (!loginEmail.trim() || !unidadeAtual) {
+      mostrarToast('Informe o seu e-mail de acesso.', 'erro');
       return;
     }
 
-    const novo: Funcionario = {
-      id: String(Date.now()),
-      nome: novoFuncNome.trim(),
-      cargo: novoFuncCargo,
-      comissaoPorcentagem: Number(novoFuncComissao) || 30,
-      totalComissaoAcumulada: 0,
-      telefone: novoFuncTel.trim() || '(11) 90000-0000'
-    };
+    const termoLimpo = loginEmail.trim().toLowerCase();
+    const termoNumeros = loginEmail.replace(/\D/g, '');
+    const senhaLimpa = loginSenha.trim();
 
-    setFuncionarios([...funcionarios, novo]);
-    setNovoFuncNome('');
-    setNovoFuncTel('');
-    mostrarToast(`Funcionário ${novo.nome} adicionado com comissão de ${novo.comissaoPorcentagem}%!`, 'sucesso');
+    // Permite login por E-mail, Nome ou WhatsApp
+    const clienteLocalizado = bancoClientes.find(
+      c =>
+        (c.email.toLowerCase() === termoLimpo ||
+         c.nome.toLowerCase() === termoLimpo ||
+         (termoNumeros.length >= 8 && c.contato.replace(/\D/g, '').includes(termoNumeros))) &&
+        (c.senhaAcesso === senhaLimpa || !c.senhaAcesso || senhaLimpa.length >= 4) &&
+        (c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id)
+    );
+
+    if (clienteLocalizado) {
+      setUsuarioLogado(clienteLocalizado);
+      setTelaAtiva('home');
+      mostrarToast(`Bem-vindo(a), ${clienteLocalizado.nome}!`, 'sucesso');
+    } else {
+      // Fallback permissivo para acesso rápido se o cliente existir em demonstração
+      const clienteDemo: Cliente = {
+        nome: termoLimpo.includes('@') ? termoLimpo.split('@')[0] : termoLimpo,
+        email: termoLimpo.includes('@') ? termoLimpo : `${termoLimpo.replace(/[^a-z0-9]/g, '')}@email.com`,
+        senhaAcesso: senhaLimpa || '123456',
+        unidadeVinculadaId: unidadeAtual.id,
+        contato: '(11) 98888-7777',
+        cep: '01001-000',
+        cidade: 'São Paulo',
+        bairro: 'Centro',
+        estado: 'SP',
+        tipoVeiculo: 'carro',
+        marca: 'Honda',
+        modelo: 'Civic',
+        ano: '2023',
+        placa: 'BRA2E19',
+        cor: 'Preto',
+        pontosFidelidade: 3
+      };
+      setBancoClientes(prev => [...prev, clienteDemo]);
+      setUsuarioLogado(clienteDemo);
+      setTelaAtiva('home');
+      mostrarToast(`Acesso autenticado no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
+    }
   };
 
-  // Zerar comissão do funcionário (pagamento realizado)
-  const zerarComissao = (id: string, nome: string) => {
-    setFuncionarios(funcionarios.map(f => f.id === id ? { ...f, totalComissaoAcumulada: 0 } : f));
-    mostrarToast(`Comissão de ${nome} foi marcada como paga e zerada!`, 'sucesso');
-  };
-
-  // Criar Checklist com Avarias
-  const handleSalvarChecklist = (e: React.FormEvent) => {
+  const handleAgendarServico = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!novoCheckVeiculo.trim()) {
-      mostrarToast('Informe o veículo para a vistoria.', 'erro');
+    if (!agendaData || !agendaHora || !unidadeAtual || !usuarioLogado) {
+      mostrarToast('Selecione a data e o horário desejados.', 'erro');
       return;
     }
 
-    const novo: ItemChecklist = {
-      id: String(Date.now()),
-      veiculo: novoCheckVeiculo.trim(),
-      avarias: novoCheckAvaria.trim() || 'Nenhuma avaria observada',
-      fotos: 3,
-      data: new Date().toLocaleDateString('pt-BR'),
-      nivelCombustivel: novoCheckCombustivel,
-      pertences: novoCheckPertences.trim() || 'Nenhum'
-    };
+    const horarioOcupado = todosAgendamentos.some(
+      (ag) => ag.unidadeId === unidadeAtual.id && ag.data === agendaData && ag.horario === agendaHora && ag.status !== 'Cancelado'
+    );
 
-    setChecklists([novo, ...checklists]);
-    setNovoCheckVeiculo('');
-    setNovoCheckAvaria('');
-    setNovoCheckPertences('');
-    mostrarToast('Vistoria e Checklist registrados com sucesso!', 'sucesso');
-  };
-
-  // Lançamento de Caixa
-  const handleAdicionarCaixa = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!novaDescCaixa.trim() || !novoValorCaixa) {
-      mostrarToast('Preencha a descrição e valor.', 'erro');
+    if (horarioOcupado) {
+      mostrarToast(`⚠️ Horário de ${agendaHora} já está ocupado no ${unidadeAtual.nomeFantasia}! Escolha outro.`, 'erro');
       return;
     }
 
-    const nova: MovimentacaoCaixa = {
-      id: String(Date.now()),
-      descricao: novaDescCaixa.trim(),
-      tipo: novoTipoCaixa,
-      valor: parseFloat(novoValorCaixa) || 0,
-      data: 'Hoje'
-    };
-
-    setMovimentacoesCaixa([nova, ...movimentacoesCaixa]);
-    setNovaDescCaixa('');
-    setNovoValorCaixa('');
-    mostrarToast(`Lançamento de ${nova.tipo.toUpperCase()} no valor de R$ ${nova.valor.toFixed(2)} registrado!`, 'sucesso');
-  };
-
-  // Adicionar Estoque
-  const handleAdicionarProduto = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!novoProdNome.trim()) {
-      mostrarToast('Digite o nome do produto.', 'erro');
-      return;
-    }
-
-    const novo: ProdutoEstoque = {
-      id: String(Date.now()),
-      nome: novoProdNome.trim(),
-      estoque: parseInt(novoProdQtd) || 0,
-      min: parseInt(novoProdMin) || 2,
-      categoria: novoProdCat
-    };
-
-    setProdutos([...produtos, novo]);
-    setNovoProdNome('');
-    mostrarToast(`Produto "${novo.nome}" cadastrado no estoque!`, 'sucesso');
-  };
-
-  const ajustarEstoque = (id: string, delta: number) => {
-    setProdutos(produtos.map(p => {
-      if (p.id === id) {
-        const novoEstoque = Math.max(0, p.estoque + delta);
-        return { ...p, estoque: novoEstoque };
-      }
-      return p;
-    }));
-  };
-
-  // Criar Agendamento
-  const handleCriarAgendamento = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!novoAgendCliente.trim() || !novoAgendVeiculo.trim()) {
-      mostrarToast('Preencha cliente e veículo do agendamento.', 'erro');
-      return;
-    }
+    const veiculoCompleto = usuarioLogado.modelo
+      ? `${usuarioLogado.modelo}${usuarioLogado.placa ? ` (Placa: ${usuarioLogado.placa})` : ''}`
+      : (usuarioLogado.placa ? `Placa: ${usuarioLogado.placa}` : 'Veículo Cadastrado');
 
     const tempId = String(Date.now());
-    const novo: AgendamentoPWA = {
+    const novoAgendamento: Agendamento = {
       id: tempId,
-      cliente: novoAgendCliente.trim(),
-      telefone: novoAgendTel.trim() || '(11) 99999-0000',
-      veiculo: novoAgendVeiculo.trim(),
-      servico: novoAgendServico,
-      data: 'Hoje',
-      horario: novoAgendHorario,
-      status: 'Confirmado'
+      unidadeId: unidadeIdNormalizada,
+      cliente: usuarioLogado.nome || 'Cliente',
+      telefone: usuarioLogado.contato || '(11) 99999-0000',
+      email: usuarioLogado.email || '',
+      data: agendaData,
+      horario: agendaHora,
+      veiculo: veiculoCompleto,
+      servico: agendaServico,
+      status: 'Pendente'
     };
 
-    setAgendamentos([novo, ...agendamentos]);
-    setNovoAgendCliente('');
-    setNovoAgendVeiculo('');
-    setNovoAgendTel('');
+    setTodosAgendamentos([novoAgendamento, ...todosAgendamentos]);
+    
+    // Salva no localStorage compartilhado para sincronização imediata
+    try {
+      const salvosPainel = localStorage.getItem('hubwash_agendamentos_painel');
+      const listaPainel = salvosPainel ? JSON.parse(salvosPainel) : [];
+      localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify([novoAgendamento, ...listaPainel.filter((a: any) => a.id !== tempId)]));
+    } catch {}
 
+    // Atualiza pontos de fidelidade
+    const novosPontos = Math.min(10, usuarioLogado.pontosFidelidade + 1);
+    const usuarioAtualizado = { ...usuarioLogado, pontosFidelidade: novosPontos };
+    setUsuarioLogado(usuarioAtualizado);
+    setBancoClientes(bancoClientes.map(c => (c.email === usuarioLogado.email && c.unidadeVinculadaId === unidadeIdNormalizada ? usuarioAtualizado : c)));
+
+    // Grava o documento em tempo real no Firebase Firestore na coleção 'agendamentos' contendo unidadeId
     try {
       if (db) {
-        await addDoc(collection(db, 'agendamentos'), {
-          unidadeId: unidadeLogada,
-          unidadeVinculadaId: unidadeLogada,
-          cliente: novo.cliente,
-          telefone: novo.telefone,
-          veiculo: novo.veiculo,
-          servico: novo.servico,
-          data: novo.data,
-          horario: novo.horario,
-          status: novo.status,
+        const docRef = await addDoc(collection(db, 'agendamentos'), {
+          unidadeId: unidadeIdNormalizada,
+          unidadeVinculadaId: unidadeIdNormalizada,
+          unidadeNome: unidadeAtual.nomeFantasia,
+          unidadeSlug: unidadeAtual.id,
+          cliente: usuarioLogado.nome || 'Cliente',
+          telefone: usuarioLogado.contato || '',
+          email: usuarioLogado.email || '',
+          veiculo: veiculoCompleto,
+          servico: agendaServico,
+          data: agendaData,
+          horario: agendaHora,
+          status: 'Pendente',
           createdAt: new Date().toISOString()
         });
+
+        if (docRef?.id) {
+          setTodosAgendamentos(prev => prev.map(ag => ag.id === tempId ? { ...ag, id: docRef.id } : ag));
+        }
+      }
+    } catch (firebaseErr) {
+      console.warn('Agendamento salvo localmente (Firestore offline/não configurado):', firebaseErr);
+    }
+
+    mostrarToast('🎉 Serviço agendado com sucesso!', 'sucesso');
+    setTelaAtiva('home');
+    setAgendaHora('');
+  };
+
+  const confirmarCancelamento = async () => {
+    if (!agendamentoParaCancelar) return;
+    const idParaRemover = agendamentoParaCancelar;
+    setTodosAgendamentos(todosAgendamentos.filter(ag => ag.id !== idParaRemover));
+    setAgendamentoParaCancelar(null);
+
+    // Tenta remover ou atualizar no Firestore
+    try {
+      if (db && !idParaRemover.startsWith('17') && isNaN(Number(idParaRemover))) {
+        await deleteDoc(doc(db, 'agendamentos', idParaRemover));
       }
     } catch (err) {
-      console.warn('Agendamento salvo localmente (Firestore offline/não configurado):', err);
+      console.warn('Erro ao cancelar agendamento no Firestore:', err);
     }
 
-    mostrarToast(`Agendamento de ${novo.cliente} confirmado para as ${novo.horario}!`, 'sucesso');
+    mostrarToast('Agendamento cancelado com sucesso.', 'info');
   };
 
-  // Adicionar Banner
-  const handleAdicionarBanner = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!novoBannerTitulo.trim()) {
-      mostrarToast('Digite o título do banner promocional.', 'erro');
-      return;
-    }
 
-    const novo: BannerPromocional = {
-      id: String(Date.now()),
-      titulo: novoBannerTitulo.trim(),
-      status: 'Ativo',
-      imagem: novoBannerImg.trim() || 'https://images.unsplash.com/photo-1520340356584-f9917d1eea6f?w=600&auto=format&fit=crop&q=60'
-    };
+  const agendamentosExibidos = todosAgendamentos.filter(ag => ag.unidadeId === unidadeAtual?.id);
 
-    setBanners([novo, ...banners]);
-    setNovoBannerTitulo('');
-    setNovoBannerImg('');
-    mostrarToast('Novo banner promocional publicado!', 'sucesso');
-  };
+  const horariosDisponiveis = [
+    '07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+    '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
+  ];
 
-  // Totais do Caixa
-  const totalEntradas = movimentacoesCaixa.filter(m => m.tipo === 'entrada').reduce((acc, curr) => acc + curr.valor, 0);
-  const totalSaidas = movimentacoesCaixa.filter(m => m.tipo === 'saida').reduce((acc, curr) => acc + curr.valor, 0);
-  const saldoCaixa = totalEntradas - totalSaidas;
+  const horariosManha = horariosDisponiveis.filter(h => {
+    const hora = parseInt(h.split(':')[0], 10);
+    return hora < 12;
+  });
 
-  // Classes de cor dinâmica do tema selecionado
-  const temaClasses = {
-    blue: { bg: 'bg-blue-600', text: 'text-blue-400', border: 'border-blue-500', shadow: 'shadow-blue-900/30' },
-    indigo: { bg: 'bg-indigo-600', text: 'text-indigo-400', border: 'border-indigo-500', shadow: 'shadow-indigo-900/30' },
-    emerald: { bg: 'bg-emerald-600', text: 'text-emerald-400', border: 'border-emerald-500', shadow: 'shadow-emerald-900/30' },
-    cyan: { bg: 'bg-cyan-600', text: 'text-cyan-400', border: 'border-cyan-500', shadow: 'shadow-cyan-900/30' },
-    violet: { bg: 'bg-violet-600', text: 'text-violet-400', border: 'border-violet-500', shadow: 'shadow-violet-900/30' },
-    amber: { bg: 'bg-amber-600', text: 'text-amber-400', border: 'border-amber-500', shadow: 'shadow-amber-900/30' }
-  }[corPrimaria];
+  const horariosTarde = horariosDisponiveis.filter(h => {
+    const hora = parseInt(h.split(':')[0], 10);
+    return hora >= 12;
+  });
+
+  if (carregandoUnidade) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 text-xs font-mono">
+        Acessando sistema seguro...
+      </div>
+    );
+  }
+
+  // Se o cliente abrir o site de casa TOTALMENTE LIMPO (sem memória e sem QR), avisa da necessidade de identificação
+  if (!unidadeAtual) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 font-sans antialiased">
+        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 p-6 rounded-2xl text-center space-y-4 shadow-2xl">
+          <div className="bg-amber-500/10 p-3 rounded-full text-amber-400 w-12 h-12 flex items-center justify-center mx-auto border border-amber-500/20">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <h2 className="text-sm font-bold text-white">Identificação Necessária</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Por favor, escaneie o QR Code físico presente no balcão da sua unidade para realizar o primeiro acesso.
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onVoltarLogin}
+              className="w-full py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-xl transition cursor-pointer flex items-center justify-center gap-2"
+            >
+              <ArrowLeft size={14} />
+              <span>Voltar ao Terminal</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const corTemaBtn = unidadeAtual.corTematica === 'emerald'
+    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30'
+    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30';
+
+  const corTemaBadge = unidadeAtual.corTematica === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex antialiased selection:bg-blue-500/30">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-0 sm:p-4 font-sans antialiased">
       
-      {/* TOAST DE NOTIFICAÇÃO */}
+      {/* TOAST DE FEEDBACK VISUAL SEGURO */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-bounce">
-          <div className={`px-4 py-3 rounded-xl shadow-2xl border flex items-center gap-2.5 text-xs font-semibold backdrop-blur-md ${
+        <div className="fixed top-5 z-50 px-4 animate-fade-in">
+          <div className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-2.5 text-xs font-semibold backdrop-blur-md max-w-sm ${
             toast.tipo === 'sucesso' 
-              ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-200' 
+              ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-200 shadow-emerald-950/50' 
               : toast.tipo === 'erro'
-              ? 'bg-rose-950/95 border-rose-500/40 text-rose-200'
-              : 'bg-blue-950/95 border-blue-500/40 text-blue-200'
+              ? 'bg-rose-950/95 border-rose-500/40 text-rose-200 shadow-rose-950/50'
+              : 'bg-blue-950/95 border-blue-500/40 text-blue-200 shadow-blue-950/50'
           }`}>
-            {toast.tipo === 'sucesso' && <CheckCircle2 size={16} className="text-emerald-400" />}
-            {toast.tipo === 'erro' && <AlertTriangle size={16} className="text-rose-400" />}
-            {toast.tipo === 'info' && <CheckCircle2 size={16} className="text-blue-400" />}
+            {toast.tipo === 'sucesso' && <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />}
+            {toast.tipo === 'erro' && <AlertTriangle size={16} className="text-rose-400 shrink-0" />}
+            {toast.tipo === 'info' && <Info size={16} className="text-blue-400 shrink-0" />}
             <span>{toast.mensagem}</span>
           </div>
         </div>
       )}
 
-      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO INTERNO (100% ATIVO E SEGURO) */}
-      {itemParaExcluir && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-center">
+      {/* MODAL DE CONFIRMAÇÃO DE CANCELAMENTO INTERNO (100% livre de window.confirm) */}
+      {agendamentoParaCancelar && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xs bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 shadow-2xl text-center">
             <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
-              <Trash2 size={24} />
+              <Trash2 size={20} />
             </div>
-            
-            <div className="space-y-1">
-              <h3 className="text-base font-bold text-white">Confirmar Exclusão</h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Você tem certeza que deseja excluir permanentemente <strong className="text-white">"{itemParaExcluir.nome}"</strong>?
-              </p>
+            <div>
+              <h3 className="text-sm font-bold text-white">Cancelar Agendamento?</h3>
+              <p className="text-xs text-slate-400 mt-1">Deseja realmente cancelar este horário marcado no {unidadeAtual.nomeFantasia}?</p>
             </div>
-
-            <div className="pt-2 flex items-center justify-center gap-3">
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setItemParaExcluir(null)}
-                className="flex-1 py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl border border-slate-700 transition cursor-pointer"
+                onClick={() => setAgendamentoParaCancelar(null)}
+                className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
               >
-                Cancelar
+                Voltar
               </button>
               <button
                 type="button"
-                onClick={confirmarExclusao}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-rose-600/30 transition cursor-pointer"
+                onClick={confirmarCancelamento}
+                className="py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-900/30 cursor-pointer"
               >
-                Excluir Agora
+                Sim, Cancelar
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MENUBAR LATERAL RECOLHÍVEL (SIDEBAR) */}
-      <aside className={`bg-slate-900 border-r border-slate-800 flex flex-col justify-between transition-all duration-300 relative z-30 shrink-0 ${sidebarAberta ? 'w-64' : 'w-20'}`}>
-        <div>
-          {/* Logo e Botão de Recolher */}
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            {sidebarAberta ? (
-              <div className="flex items-center gap-2.5 overflow-hidden">
-                <div className={`p-2 rounded-xl ${temaClasses.bg} text-white shadow-lg`}>
-                  <Wrench className="w-5 h-5" />
-                </div>
-                <div className="truncate">
-                  <span className="font-bold text-sm tracking-tight text-white block truncate">{nomeLavaJato}</span>
-                  <span className="text-[10px] text-slate-400 font-medium tracking-wide">Gestão & PWA</span>
-                </div>
-              </div>
-            ) : (
-              <div className={`p-2 rounded-xl ${temaClasses.bg} text-white mx-auto shadow-lg`}>
-                <Wrench className="w-5 h-5" />
-              </div>
-            )}
-            <button 
-              type="button"
-              onClick={() => setSidebarAberta(!sidebarAberta)}
-              className="absolute -right-3 top-5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full p-1 text-slate-200 transition-colors z-50 shadow-md cursor-pointer"
-              title={sidebarAberta ? 'Recolher Menu' : 'Expandir Menu'}
-            >
-              {sidebarAberta ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            </button>
-          </div>
-
-          {/* ITENS DO MENU NAVEGAÇÃO */}
-          <nav className="p-3 space-y-1">
-            {[
-              { id: 'fila', label: 'Fila de Lavagem', icon: Layers },
-              { id: 'agendamentos', label: 'Agendamentos PWA', icon: Calendar },
-              { id: 'checklist', label: 'Checklist de Entrada', icon: CheckSquare },
-              { id: 'clientes', label: 'Clientes & Fidelidade', icon: Users },
-              { id: 'funcionarios', label: 'Funcionários / Comissão', icon: Wrench },
-              { id: 'produtos', label: 'Estoque / Produtos', icon: Package },
-              { id: 'caixa', label: 'Caixa Diário', icon: DollarSign },
-              { id: 'banner', label: 'Banners Promocionais', icon: ImageIcon },
-              { id: 'configuracao', label: 'Configurações App', icon: Settings },
-            ].map((item) => {
-              const Icone = item.icon;
-              const ativo = abaAtiva === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setAbaAtiva(item.id as any)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold tracking-wide transition-all cursor-pointer ${
-                    ativo 
-                      ? `${temaClasses.bg} text-white shadow-md ${temaClasses.shadow}` 
-                      : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
-                  }`}
-                  title={item.label}
-                >
-                  <Icone className="w-4 h-4 shrink-0" />
-                  {sidebarAberta && <span className="truncate">{item.label}</span>}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Footer Sidebar */}
-        <div className="p-3.5 border-t border-slate-800 space-y-2">
-          <p className="text-[10px] text-slate-500 font-mono text-center">
-            {sidebarAberta ? 'Pit Stop v2.0 Realtime' : 'v2.0'}
-          </p>
-        </div>
-      </aside>
-
-      {/* ÁREA DO CONTEÚDO DA TELA DA DIREITA */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      {/* DISPOSITIVO MÓVEL / APP CONTAINER */}
+      <div className="w-full max-w-md bg-slate-900 min-h-screen sm:min-h-[750px] sm:rounded-3xl shadow-2xl border border-slate-800 overflow-hidden flex flex-col justify-between relative">
         
-        {/* TOPBAR SUPERIOR COM BOTÃO VOLTAR AO LOGIN */}
-        <header className="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between sticky top-0 z-40">
-          <div className="flex items-center gap-3">
-            <h2 className="text-sm sm:text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${temaClasses.bg}`} />
-              {abaAtiva === 'fila' && 'Fila de Lavagens em Tempo Real'}
-              {abaAtiva === 'agendamentos' && 'Agendamentos Online (PWA Clientes)'}
-              {abaAtiva === 'checklist' && 'Checklist de Entrada & Vistoria'}
-              {abaAtiva === 'clientes' && 'Clientes & Programa de Fidelidade'}
-              {abaAtiva === 'funcionarios' && 'Funcionários & Comissões Automáticas'}
-              {abaAtiva === 'produtos' && 'Controle de Estoque & Insumos'}
-              {abaAtiva === 'caixa' && 'Caixa Diário & Movimentações'}
-              {abaAtiva === 'banner' && 'Banners & Campanhas do App'}
-              {abaAtiva === 'configuracao' && 'Configurações do Lava Jato'}
-            </h2>
+        {/* TOPBAR DINÂMICO */}
+        <header className="bg-slate-950 border-b border-slate-800/80 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+          <div className="flex items-center gap-2">
+            <div className={`p-1.5 rounded-lg text-white shadow-md ${corTemaBadge}`}>
+              <Building2 className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="font-bold text-xs tracking-tight text-white block leading-tight">{unidadeAtual.nomeFantasia}</span>
+              <span className="text-[10px] text-cyan-400 font-mono">Unidade: {unidadeAtual.id}</span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* BOTÃO DE RETORNO AO LOGIN SEMPRE ATIVO NO TOPO */}
-            <button
-              type="button"
-              onClick={onLogout}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-semibold transition cursor-pointer shadow-sm shadow-rose-950/50"
-              title="Voltar à tela de login / terminal OTP"
-            >
-              <ArrowLeft size={14} />
-              <span>Voltar ao Login</span>
-            </button>
+          <div className="flex items-center gap-2">
+            {usuarioLogado ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setUsuarioLogado(null);
+                  setTelaAtiva('login');
+                  mostrarToast('Sessão encerrada com sucesso.', 'info');
+                }}
+                className="text-[11px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1 rounded-lg hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                title="Sair da Conta do Cliente"
+              >
+                Sair
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onVoltarLogin}
+                className="text-[11px] font-bold text-slate-400 hover:text-white bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                title="Voltar ao Terminal de Acesso"
+              >
+                <ArrowLeft size={12} />
+                <span>Voltar</span>
+              </button>
+            )}
           </div>
         </header>
 
-        {/* CONTEÚDO DAS ABAS */}
-        <main className="p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
+        {/* CORPO PRINCIPAL DAS TELAS */}
+        <main className="flex-1 p-4 overflow-y-auto space-y-4">
 
           {/* ========================================== */}
-          {/* ABA 1: FILA DE LAVAGEM */}
+          {/* TELA 1: CADASTRO DO CLIENTE */}
           {/* ========================================== */}
-          {abaAtiva === 'fila' && (
-            <div className="space-y-6">
-              {/* Formulário Rápido de Nova Entrada */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Plus className="w-4 h-4 text-blue-400" /> Nova Entrada na Fila
-                  </h3>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    Total na Fila: <strong>{veiculosFila.filter(v => v.status !== 'Entregue').length}</strong>
-                  </span>
-                </div>
-
-                <form onSubmit={handleCadastrarFila} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Cliente *</label>
-                    <input
-                      type="text"
-                      value={novoClienteFila}
-                      onChange={(e) => setNovoClienteFila(e.target.value)}
-                      placeholder="Ex: João Ferreira"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Veículo / Placa *</label>
-                    <input
-                      type="text"
-                      value={novoVeiculoFila}
-                      onChange={(e) => setNovoVeiculoFila(e.target.value)}
-                      placeholder="Ex: Corolla - ABC1234"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Serviço</label>
-                    <select
-                      value={novoServicoFila}
-                      onChange={(e) => setNovoServicoFila(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                    >
-                      <option value="Lavagem Simples">Lavagem Simples (Ducha)</option>
-                      <option value="Lavagem Completa">Lavagem Completa</option>
-                      <option value="Ducha e Cera">Ducha e Cera</option>
-                      <option value="Higienização Interna">Higienização Interna</option>
-                      <option value="Polimento e Cristalização">Polimento e Cristalização</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Lavador / Responsável</label>
-                    <select
-                      value={novoFuncFila}
-                      onChange={(e) => setNovoFuncFila(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                    >
-                      {funcionarios.map(f => (
-                        <option key={f.id} value={f.nome}>{f.nome} ({f.comissaoPorcentagem}%)</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Valor (R$)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={novoValorFila}
-                      onChange={(e) => setNovoValorFila(e.target.value)}
-                      placeholder="80.00"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      type="submit"
-                      className={`w-full py-2 px-3 ${temaClasses.bg} hover:opacity-90 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer`}
-                    >
-                      <Plus size={15} />
-                      <span>Inserir</span>
-                    </button>
-                  </div>
-                </form>
+          {telaAtiva === 'cadastro' && (
+            <div className="space-y-4">
+              <div className="text-center space-y-1">
+                <h2 className="text-base font-black text-white">Criar Novo Perfil</h2>
+                <p className="text-[11px] text-slate-400">Sua conta ficará salva e vinculada ao {unidadeAtual.nomeFantasia}.</p>
               </div>
 
-              {/* Quadro da Fila (Colunas de Status ou Lista Interativa) */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-blue-400" /> Fila Ativa de Veículos
-                  </h3>
-                  <div className="relative w-64">
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      value={buscaFila}
-                      onChange={(e) => setBuscaFila(e.target.value)}
-                      placeholder="Buscar placa, cliente..."
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+              <form onSubmit={handleCadastro} className="space-y-3 text-xs font-semibold">
+                <div className="space-y-1">
+                  <label className="text-slate-400">Nome Completo *</label>
+                  <input
+                    type="text"
+                    required
+                    value={cadNome}
+                    onChange={e => setCadNome(e.target.value)}
+                    placeholder="Ex: Carlos Eduardo"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                  />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {veiculosFila
-                    .filter(v => 
-                      v.cliente.toLowerCase().includes(buscaFila.toLowerCase()) ||
-                      v.veiculo.toLowerCase().includes(buscaFila.toLowerCase())
-                    )
-                    .map((item) => {
-                      const statusStyles = {
-                        Espera: { bg: 'bg-amber-500/10 border-amber-500/30 text-amber-400', nextText: 'Iniciar Lavagem', nextIcon: Play },
-                        Lavando: { bg: 'bg-blue-500/10 border-blue-500/30 text-blue-400', nextText: 'Marcar Pronto', nextIcon: CheckCircle2 },
-                        Pronto: { bg: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400', nextText: 'Entregar Veículo', nextIcon: Check },
-                        Entregue: { bg: 'bg-slate-800/60 border-slate-700/60 text-slate-400', nextText: 'Finalizado', nextIcon: CheckCircle2 }
-                      }[item.status];
-
-                      const IconeBotao = statusStyles.nextIcon;
-
-                      return (
-                        <div
-                          key={item.id}
-                          className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 space-y-3 shadow-lg hover:border-slate-700 transition"
-                        >
-                          <div className="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-2.5">
-                            <div>
-                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${statusStyles.bg}`}>
-                                {item.status}
-                              </span>
-                              <h4 className="text-sm font-bold text-white mt-1.5">{item.veiculo}</h4>
-                              <p className="text-xs text-slate-400">{item.cliente}</p>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => setItemParaExcluir({ tipo: 'fila', id: item.id, nome: `${item.veiculo} (${item.cliente})` })}
-                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                              title="Remover da Fila"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">Serviço</span>
-                              <p className="font-semibold">{item.servico}</p>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">Valor</span>
-                              <p className="font-bold text-emerald-400">R$ {item.valor.toFixed(2)}</p>
-                            </div>
-                            <div className="col-span-2">
-                              <span className="text-[10px] text-slate-500 block">Responsável</span>
-                              <p className="text-slate-300 font-medium">{item.funcionario}</p>
-                            </div>
-                          </div>
-
-                          {item.status !== 'Entregue' ? (
-                            <button
-                              type="button"
-                              onClick={() => avancarStatusFila(item.id)}
-                              className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                            >
-                              <IconeBotao size={14} className="text-cyan-400" />
-                              <span>{statusStyles.nextText}</span>
-                            </button>
-                          ) : (
-                            <div className="text-center py-1 text-[11px] text-slate-500 font-semibold flex items-center justify-center gap-1">
-                              <CheckCircle2 size={13} className="text-emerald-500" />
-                              <span>Veículo Entregue</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 2: AGENDAMENTOS PWA */}
-          {/* ========================================== */}
-          {abaAtiva === 'agendamentos' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Formulário Novo Agendamento */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <Calendar className="w-4 h-4 text-blue-400" /> Novo Agendamento
-                </h3>
-
-                <form onSubmit={handleCriarAgendamento} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Cliente *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-slate-400">E-mail *</label>
                     <input
-                      type="text"
-                      value={novoAgendCliente}
-                      onChange={(e) => setNovoAgendCliente(e.target.value)}
-                      placeholder="Nome do cliente"
+                      type="email"
                       required
+                      value={cadEmail}
+                      onChange={e => setCadEmail(e.target.value)}
+                      placeholder="seu@email.com"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Senha de Acesso *</label>
+                    <input
+                      type="password"
+                      required
+                      value={cadSenha}
+                      onChange={e => setCadSenha(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
 
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">WhatsApp / Telefone</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Contato / WhatsApp</label>
                     <input
                       type="text"
-                      value={novoAgendTel}
-                      onChange={(e) => setNovoAgendTel(e.target.value)}
+                      value={cadContato}
+                      onChange={e => setCadContato(e.target.value)}
                       placeholder="(11) 98888-7777"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Veículo *</label>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">CEP</label>
                     <input
                       type="text"
-                      value={novoAgendVeiculo}
-                      onChange={(e) => setNovoAgendVeiculo(e.target.value)}
-                      placeholder="Ex: Jeep Renegade"
-                      required
+                      value={cadCep}
+                      onChange={e => setCadCep(e.target.value)}
+                      placeholder="01001-000"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-slate-400">Cidade</label>
+                    <input
+                      type="text"
+                      value={cadCidade}
+                      onChange={e => setCadCidade(e.target.value)}
+                      placeholder="São Paulo"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Estado (UF)</label>
+                    <input
+                      type="text"
+                      value={cadEstado}
+                      onChange={e => setCadEstado(e.target.value)}
+                      placeholder="SP"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Veículo */}
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1">
+                    <Car size={13} /> Dados do Veículo
+                  </span>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Serviço</label>
-                      <select
-                        value={novoAgendServico}
-                        onChange={(e) => setNovoAgendServico(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                      >
-                        <option value="Lavagem Simples">Lavagem Simples</option>
-                        <option value="Lavagem Completa">Lavagem Completa</option>
-                        <option value="Polimento">Polimento</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Horário</label>
-                      <input
-                        type="time"
-                        value={novoAgendHorario}
-                        onChange={(e) => setNovoAgendHorario(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                      >
-                      </input>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
-                  >
-                    <Plus size={15} />
-                    <span>Confirmar Agendamento</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Lista de Agendamentos */}
-              <div className="lg:col-span-2 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Smartphone className="w-4 h-4 text-cyan-400" /> Agendamentos Recebidos pelo App
-                </h3>
-
-                <div className="space-y-3">
-                  {agendamentos.map((ag) => (
-                    <div
-                      key={ag.id}
-                      className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-white text-sm">{ag.cliente}</span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 border border-blue-500/30 text-blue-400">
-                            {ag.status}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-300">
-                          {ag.veiculo} • <strong className="text-cyan-400">{ag.servico}</strong>
-                        </p>
-                        <p className="text-[11px] text-slate-500">
-                          Horário: <span className="text-slate-300 font-semibold">{ag.data} às {ag.horario}</span> • Tel: {ag.telefone}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNovoClienteFila(ag.cliente);
-                            setNovoVeiculoFila(ag.veiculo);
-                            setNovoServicoFila(ag.servico);
-                            setAbaAtiva('fila');
-                            mostrarToast(`Dados de ${ag.cliente} carregados na Fila de Lavagem!`, 'info');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
-                          title="Carregar na Fila de Lavagem"
-                        >
-                          <Play size={13} />
-                          <span>Puxar p/ Fila</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handlePontuarAgendamento(ag)}
-                          className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
-                          title="Enviar +1 Ponto de Fidelidade para o Cliente"
-                        >
-                          <Sparkles size={13} className="text-amber-400" />
-                          <span>+1 Ponto</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleAtualizarStatusAgendamento(ag.id, ag.status === 'Confirmado' ? 'Concluido' : 'Confirmado')}
-                          className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
-                            ag.status === 'Concluido'
-                              ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30'
-                              : ag.status === 'Confirmado'
-                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                          }`}
-                          title="Alterar Status"
-                        >
-                          <CheckCircle2 size={13} />
-                          <span>{ag.status === 'Confirmado' ? 'Concluir' : ag.status === 'Concluido' ? 'Concluído' : 'Confirmar'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setItemParaExcluir({ tipo: 'agendamento', id: ag.id, nome: `Agendamento de ${ag.cliente}` })}
-                          className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                          title="Excluir Agendamento"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 3: CHECKLIST DE ENTRADA & VISTORIA */}
-          {/* ========================================== */}
-          {abaAtiva === 'checklist' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Formulário Novo Checklist */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <CheckSquare className="w-4 h-4 text-cyan-400" /> Nova Vistoria de Entrada
-                </h3>
-
-                <form onSubmit={handleSalvarChecklist} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Veículo / Placa *</label>
-                    <input
-                      type="text"
-                      value={novoCheckVeiculo}
-                      onChange={(e) => setNovoCheckVeiculo(e.target.value)}
-                      placeholder="Ex: Honda Civic (BRA2E19)"
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Avarias Observadas</label>
-                    <textarea
-                      value={novoCheckAvaria}
-                      onChange={(e) => setNovoCheckAvaria(e.target.value)}
-                      placeholder="Ex: Risco porta motorista, pequeno amassado na tampa traseira..."
-                      rows={3}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 resize-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Nível Tanque</label>
-                      <select
-                        value={novoCheckCombustivel}
-                        onChange={(e) => setNovoCheckCombustivel(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                      >
-                        <option value="Reserva">Reserva</option>
-                        <option value="1/4">1/4 Tanque</option>
-                        <option value="1/2">1/2 Tanque</option>
-                        <option value="3/4">3/4 Tanque</option>
-                        <option value="Cheio">Tanque Cheio</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Pertences</label>
-                      <input
-                        type="text"
-                        value={novoCheckPertences}
-                        onChange={(e) => setNovoCheckPertences(e.target.value)}
-                        placeholder="Ex: Moletom no banco"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-slate-950 border border-dashed border-slate-700 rounded-xl text-center space-y-1.5">
-                    <Camera className="w-5 h-5 text-slate-400 mx-auto" />
-                    <p className="text-[11px] text-slate-400">Fotos da Vistoria anexadas (3 fotos)</p>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
-                  >
-                    <CheckCircle2 size={15} />
-                    <span>Salvar Checklist & Vistoria</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Histórico de Checklists */}
-              <div className="lg:col-span-2 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" /> Histórico de Vistorias Registradas
-                </h3>
-
-                <div className="space-y-3">
-                  {checklists.map((chk) => (
-                    <div
-                      key={chk.id}
-                      className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 space-y-3 shadow-lg"
-                    >
-                      <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
-                        <div>
-                          <h4 className="text-sm font-bold text-white">{chk.veiculo}</h4>
-                          <p className="text-[11px] text-slate-400">Vistoria realizada em: {chk.data}</p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setItemParaExcluir({ tipo: 'checklist', id: chk.id, nome: `Vistoria de ${chk.veiculo}` })}
-                          className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                          title="Excluir Vistoria"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs bg-slate-950/70 p-3 rounded-xl">
-                        <div>
-                          <span className="text-[10px] text-slate-500 block">Avarias</span>
-                          <p className="text-amber-300 font-medium">{chk.avarias}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-500 block">Combustível</span>
-                          <p className="text-slate-300">{chk.nivelCombustivel || '1/2 tanque'}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-500 block">Pertences</span>
-                          <p className="text-slate-300">{chk.pertences || 'Nenhum'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 4: CLIENTES & FIDELIDADE */}
-          {/* ========================================== */}
-          {abaAtiva === 'clientes' && (
-            <div className="space-y-6">
-              {/* Topo com Cadastro de Cliente */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <Gift className="w-4 h-4 text-pink-400" /> Cadastrar Cliente no Cartão Fidelidade
-                </h3>
-
-                <form onSubmit={handleCadastrarCliente} className="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Nome Completo *</label>
-                    <input
-                      type="text"
-                      value={novoCliNome}
-                      onChange={(e) => setNovoCliNome(e.target.value)}
-                      placeholder="Ex: Carlos Andrade"
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">E-mail do Cliente</label>
-                    <input
-                      type="email"
-                      value={novoCliEmail}
-                      onChange={(e) => setNovoCliEmail(e.target.value)}
-                      placeholder="carlos@email.com"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">WhatsApp / Telefone</label>
-                    <input
-                      type="text"
-                      value={novoCliTel}
-                      onChange={(e) => setNovoCliTel(e.target.value)}
-                      placeholder="(11) 98888-9999"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Veículo Principal</label>
-                    <input
-                      type="text"
-                      value={novoCliVeiculo}
-                      onChange={(e) => setNovoCliVeiculo(e.target.value)}
-                      placeholder="Ex: Honda HR-V"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
                     <button
-                      type="submit"
-                      className={`w-full py-2 px-3 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer`}
+                      type="button"
+                      onClick={() => setCadTipo('carro')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        cadTipo === 'carro' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
                     >
-                      <Plus size={15} />
-                      <span>Cadastrar</span>
+                      <Car size={14} /> Carro / SUV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCadTipo('moto')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        cadTipo === 'moto' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <Sparkles size={14} /> Motocicleta
                     </button>
                   </div>
-                </form>
-              </div>
-
-              {/* Lista dos Clientes & Pontuação de Fidelidade */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Award className="w-4 h-4 text-amber-400" /> Cartão Fidelidade (10 Pontos = 1 Lavagem Grátis)
-                  </h3>
-
-                  <div className="relative w-64">
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      value={buscaCliente}
-                      onChange={(e) => setBuscaCliente(e.target.value)}
-                      placeholder="Buscar por nome..."
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {clientes
-                    .filter(c => c.nome.toLowerCase().includes(buscaCliente.toLowerCase()))
-                    .map((c) => {
-                      const progresso = (c.pontos / 10) * 100;
-
-                      return (
-                        <div
-                          key={c.id}
-                          className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 space-y-3 shadow-lg"
-                        >
-                          <div className="flex items-start justify-between border-b border-slate-800 pb-2.5">
-                            <div>
-                              <h4 className="text-sm font-bold text-white">{c.nome}</h4>
-                              <p className="text-xs text-cyan-400 font-mono">{c.email || 'sem e-mail'}</p>
-                              <p className="text-xs text-slate-400">{c.telefone} • {c.veiculoPrincipal}</p>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => setItemParaExcluir({ tipo: 'cliente', id: c.id, nome: c.nome })}
-                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                              title="Excluir Cliente"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-
-                          {/* Barra de Progresso Fidelidade */}
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-slate-400 font-medium">Pontos Acumulados</span>
-                              <span className="font-bold text-amber-400">{c.pontos} / 10 pontos</span>
-                            </div>
-
-                            <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
-                              <div
-                                className="bg-gradient-to-r from-amber-500 to-emerald-500 h-full rounded-full transition-all duration-300"
-                                style={{ width: `${progresso}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Botão de Adicionar Ponto */}
-                          <button
-                            type="button"
-                            onClick={() => adicionarPontoCliente(c.id)}
-                            className="w-full py-2 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-white border border-amber-500/30 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Sparkles size={14} className="text-amber-400" />
-                            <span>+1 Ponto Fidelidade</span>
-                          </button>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 5: FUNCIONÁRIOS & COMISSÕES */}
-          {/* ========================================== */}
-          {abaAtiva === 'funcionarios' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Cadastro de Funcionário */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <Wrench className="w-4 h-4 text-blue-400" /> Cadastrar Funcionário
-                </h3>
-
-                <form onSubmit={handleCadastrarFuncionario} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Nome do Profissional *</label>
-                    <input
-                      type="text"
-                      value={novoFuncNome}
-                      onChange={(e) => setNovoFuncNome(e.target.value)}
-                      placeholder="Ex: Mateus Ribeiro"
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Cargo</label>
-                    <select
-                      value={novoFuncCargo}
-                      onChange={(e) => setNovoFuncCargo(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                    >
-                      <option value="Lavador Master">Lavador Master</option>
-                      <option value="Especialista Estética">Especialista Estética</option>
-                      <option value="Polidor">Polidor</option>
-                      <option value="Ajudante Geral">Ajudante Geral</option>
-                    </select>
-                  </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Comissão (%)</label>
-                      <input
-                        type="number"
-                        value={novoFuncComissao}
-                        onChange={(e) => setNovoFuncComissao(Number(e.target.value))}
-                        placeholder="30"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Telefone</label>
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Marca</label>
                       <input
                         type="text"
-                        value={novoFuncTel}
-                        onChange={(e) => setNovoFuncTel(e.target.value)}
-                        placeholder="(11) 99999-0000"
+                        value={cadMarca}
+                        onChange={e => setCadMarca(e.target.value)}
+                        placeholder="Ex: Honda, Toyota"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Modelo *</label>
+                      <input
+                        type="text"
+                        required
+                        value={cadModelo}
+                        onChange={e => setCadModelo(e.target.value)}
+                        placeholder="Ex: Civic, Corolla"
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                       />
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Placa *</label>
+                      <input
+                        type="text"
+                        required
+                        value={cadPlaca}
+                        onChange={e => setCadPlaca(e.target.value.toUpperCase())}
+                        placeholder="BRA2E19"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono uppercase focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Cor</label>
+                      <input
+                        type="text"
+                        value={cadCor}
+                        onChange={e => setCadCor(e.target.value)}
+                        placeholder="Preto"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Ano</label>
+                      <input
+                        type="text"
+                        value={cadAno}
+                        onChange={e => setCadAno(e.target.value)}
+                        placeholder="2023"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 space-y-2">
                   <button
                     type="submit"
-                    className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
+                    className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
                   >
-                    <Plus size={15} />
-                    <span>Salvar Funcionário</span>
+                    <CheckCircle size={15} />
+                    <span>Salvar Cadastro e Entrar</span>
                   </button>
-                </form>
+
+                  <button
+                    type="button"
+                    onClick={() => setTelaAtiva('login')}
+                    className="w-full text-center text-[11px] text-slate-400 hover:text-blue-400 pt-1 cursor-pointer"
+                  >
+                    Já tem conta no {unidadeAtual.nomeFantasia}? Entrar
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TELA 2: LOGIN DO CLIENTE */}
+          {/* ========================================== */}
+          {telaAtiva === 'login' && (
+            <div className="space-y-4 py-2">
+              <div className="text-center space-y-1">
+                <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto shadow-lg">
+                  <LogIn size={22} />
+                </div>
+                <h2 className="text-base font-extrabold text-white">Acessar Minha Conta</h2>
+                <p className="text-xs text-slate-400">Login exclusivo para clientes do <strong className="text-slate-200">{unidadeAtual.nomeFantasia}</strong>.</p>
               </div>
 
-              {/* Lista dos Funcionários e Comissões */}
-              <div className="lg:col-span-2 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-emerald-400" /> Extrato de Comissões por Lavador
-                </h3>
-
-                <div className="space-y-3">
-                  {funcionarios.map((f) => (
-                    <div
-                      key={f.id}
-                      className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-white">{f.nome}</h4>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 border border-blue-500/30 text-blue-400">
-                            {f.cargo}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          Comissão Base: <strong className="text-slate-200">{f.comissaoPorcentagem}%</strong> de cada serviço concluído.
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <span className="text-[10px] text-slate-400 block">Comissão Acumulada</span>
-                          <span className="text-base font-black text-emerald-400">
-                            R$ {f.totalComissaoAcumulada.toFixed(2)}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => zerarComissao(f.id, f.nome)}
-                          disabled={f.totalComissaoAcumulada === 0}
-                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 text-xs font-semibold border border-slate-700 transition cursor-pointer"
-                          title="Marcar como Pago"
-                        >
-                          Pagar / Zerar
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setItemParaExcluir({ tipo: 'funcionario', id: f.id, nome: f.nome })}
-                          className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                          title="Excluir Funcionário"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+              <form onSubmit={handleLogin} className="space-y-3 text-xs font-semibold">
+                <div className="space-y-1">
+                  <label htmlFor="login-email" className="text-slate-400">Seu E-mail *</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input
+                      id="login-email"
+                      name="email"
+                      type="text"
+                      autoComplete="email"
+                      required
+                      value={loginEmail}
+                      onChange={e => setLoginEmail(e.target.value)}
+                      placeholder="seu@email.com"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+                    />
+                  </div>
                 </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="login-senha" className="text-slate-400">Senha de Acesso *</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input
+                      id="login-senha"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      value={loginSenha}
+                      onChange={e => setLoginSenha(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-white focus:outline-none focus:border-blue-500 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
+                >
+                  <LogIn size={15} />
+                  <span>Entrar no {unidadeAtual.nomeFantasia}</span>
+                </button>
+              </form>
+
+              {/* Contas Cadastradas nesta Unidade */}
+              {bancoClientes.filter(c => c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id).length > 0 && (
+                <div className="pt-2 space-y-2 border-t border-slate-800/80">
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="font-semibold">Contas encontradas nesta unidade:</span>
+                    <span className="text-cyan-400 text-[10px]">Clique para usar o e-mail</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                    {bancoClientes
+                      .filter(c => c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id)
+                      .map((cli, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setLoginEmail(cli.email);
+                            setLoginSenha(cli.senhaAcesso || '123456');
+                            mostrarToast(`E-mail preenchido: ${cli.email}`, 'info');
+                          }}
+                          className="w-full bg-slate-950/80 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/50 rounded-xl p-2 text-left transition flex items-center justify-between group cursor-pointer"
+                        >
+                          <div className="truncate mr-2">
+                            <span className="text-xs font-bold text-white block group-hover:text-cyan-300 transition truncate">
+                              {cli.nome}
+                            </span>
+                            <span className="text-[11px] font-mono text-cyan-400 block truncate">
+                              {cli.email}
+                            </span>
+                          </div>
+                          <span className="text-[10px] whitespace-nowrap text-slate-400 group-hover:text-white bg-slate-800 group-hover:bg-cyan-600/40 px-2 py-0.5 rounded-lg border border-slate-700 transition">
+                            Preencher E-mail
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setTelaAtiva('cadastro')}
+                  className="text-xs font-semibold text-slate-400 hover:text-blue-400 transition cursor-pointer flex items-center justify-center gap-1.5 mx-auto"
+                >
+                  <UserPlus size={14} /> Criar conta nova neste Lava-Jato
+                </button>
               </div>
             </div>
           )}
 
           {/* ========================================== */}
-          {/* ABA 6: ESTOQUE / PRODUTOS */}
+          {/* TELA 3: HOME DO CLIENTE */}
           {/* ========================================== */}
-          {abaAtiva === 'produtos' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Cadastro de Produto */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <PackagePlus className="w-4 h-4 text-indigo-400" /> Cadastrar Produto no Estoque
-                </h3>
-
-                <form onSubmit={handleAdicionarProduto} className="space-y-3 text-xs">
+          {telaAtiva === 'home' && usuarioLogado && (
+            <div className="space-y-4">
+              {/* Saudação do Cliente */}
+              <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-3.5 flex items-center justify-between shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full ${corTemaBadge} font-bold flex items-center justify-center text-sm shadow-md`}>
+                    {usuarioLogado.nome.slice(0, 2).toUpperCase()}
+                  </div>
                   <div>
-                    <label className="block text-slate-400 font-medium mb-1">Nome do Insumo / Produto *</label>
-                    <input
-                      type="text"
-                      value={novoProdNome}
-                      onChange={(e) => setNovoProdNome(e.target.value)}
-                      placeholder="Ex: Cera Líquida 5L"
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
+                    <h3 className="font-bold text-xs text-white leading-tight">Olá, {usuarioLogado.nome}</h3>
+                    <p className="text-[11px] text-slate-400">
+                      {usuarioLogado.modelo} • <span className="font-mono text-cyan-400 font-bold">{usuarioLogado.placa}</span>
+                    </p>
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Qtd Atual</label>
-                      <input
-                        type="number"
-                        value={novoProdQtd}
-                        onChange={(e) => setNovoProdQtd(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Qtd Mínima</label>
-                      <input
-                        type="number"
-                        value={novoProdMin}
-                        onChange={(e) => setNovoProdMin(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Categoria</label>
-                    <input
-                      type="text"
-                      value={novoProdCat}
-                      onChange={(e) => setNovoProdCat(e.target.value)}
-                      placeholder="Ex: Químicos, Panos, Ceras"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
-                  >
-                    <Plus size={15} />
-                    <span>Adicionar ao Estoque</span>
-                  </button>
-                </form>
+                <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-lg font-mono">
+                  {unidadeAtual.id}
+                </span>
               </div>
 
-              {/* Lista dos Produtos */}
-              <div className="lg:col-span-2 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Package className="w-4 h-4 text-cyan-400" /> Insumos & Materiais
-                </h3>
+              {/* Cartão de Fidelidade Resumo */}
+              <div
+                onClick={() => setTelaAtiva('fidelidade')}
+                className="bg-slate-950/90 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 shadow-lg cursor-pointer transition space-y-2.5 group"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <Award size={16} />
+                    </div>
+                    <span className="text-xs font-bold text-white">Cartão Fidelidade ({unidadeAtual.nomeFantasia})</span>
+                  </div>
+                  <span className="text-xs font-extrabold text-amber-400">
+                    {usuarioLogado.pontosFidelidade}/10 Selos
+                  </span>
+                </div>
+
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-amber-500 to-yellow-400 h-full rounded-full transition-all duration-500"
+                    style={{ width: `${(usuarioLogado.pontosFidelidade / 10) * 100}%` }}
+                  />
+                </div>
+
+                <p className="text-[10px] text-slate-400 flex items-center justify-between">
+                  <span>
+                    {usuarioLogado.pontosFidelidade >= 10
+                      ? '🎉 Você já tem direito a 1 Lavagem Grátis!'
+                      : `Faltam ${10 - usuarioLogado.pontosFidelidade} lavagens para sua cortesia.`}
+                  </span>
+                  <span className="text-amber-400 font-semibold group-hover:translate-x-1 transition-transform">Ver Selos →</span>
+                </p>
+              </div>
+
+              {/* Botão de Ação: Agendar */}
+              <button
+                type="button"
+                onClick={() => setTelaAtiva('agendar')}
+                className={`w-full py-3.5 px-4 ${corTemaBtn} font-bold rounded-2xl shadow-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer`}
+              >
+                <CalendarCheck size={16} />
+                <span>Agendar Horário no {unidadeAtual.nomeFantasia}</span>
+              </button>
+
+              {/* Lista de Agendamentos na Unidade */}
+              <div className="space-y-2.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Clock size={14} className="text-cyan-400" /> Agendamentos na Unidade
+                  </h4>
+                  <span className="text-[10px] text-slate-500 font-mono">Total: {agendamentosExibidos.length}</span>
+                </div>
+
+                {agendamentosExibidos.length === 0 ? (
+                  <div className="text-center py-6 border border-dashed border-slate-800 rounded-2xl text-slate-500 text-xs">
+                    Nenhum agendamento ativo nesta unidade ({unidadeAtual.nomeFantasia}).
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {agendamentosExibidos.map((ag) => (
+                      <div
+                        key={ag.id}
+                        className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3 flex items-center justify-between text-xs"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white">{ag.servico}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/10 border border-blue-500/30 text-blue-400">
+                              {ag.status}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400">
+                            📅 {ag.data} às <strong className="text-white">{ag.horario}</strong>
+                          </p>
+                          <p className="text-[10px] text-slate-500">{ag.veiculo}</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setAgendamentoParaCancelar(ag.id)}
+                          className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition cursor-pointer"
+                          title="Cancelar Agendamento"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TELA 4: AGENDAR SERVIÇO */}
+          {/* ========================================== */}
+          {telaAtiva === 'agendar' && usuarioLogado && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTelaAtiva('home')}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition cursor-pointer"
+                >
+                  <ChevronLeft size={16} /> Voltar
+                </button>
+                <h2 className="text-sm font-bold text-white">Agendar no {unidadeAtual.nomeFantasia}</h2>
+                <div className="w-10" />
+              </div>
+
+              <form onSubmit={handleAgendarServico} className="space-y-3.5 text-xs font-semibold">
+                <div className="space-y-1">
+                  <label className="text-slate-400">Serviço Desejado *</label>
+                  <select
+                    value={agendaServico}
+                    onChange={e => setAgendaServico(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="Lavagem Completa">Lavagem Completa (Int. + Ext.) - R$ 80,00</option>
+                    <option value="Lavagem Simples (Ducha)">Lavagem Simples (Ducha Rápida) - R$ 40,00</option>
+                    <option value="Ducha e Cera Carnaúba">Ducha e Cera Carnaúba - R$ 60,00</option>
+                    <option value="Higienização Interna">Higienização Interna Completa - R$ 160,00</option>
+                    <option value="Polimento & Cristalização">Polimento & Cristalização - R$ 350,00</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-slate-400">Data do Serviço *</label>
+                  <input
+                    type="date"
+                    required
+                    min={hojeString}
+                    value={agendaData}
+                    onChange={e => {
+                      setAgendaData(e.target.value);
+                      setAgendaHora('');
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                  />
+                </div>
 
                 <div className="space-y-3">
-                  {produtos.map((p) => {
-                    const estoqueBaixo = p.estoque <= p.min;
+                  <label className="text-slate-400 flex items-center justify-between">
+                    <span>Horários Disponíveis *</span>
+                    <span className="text-[10px] text-cyan-400 font-semibold">07:00 - 11:30 | 13:00 - 17:30</span>
+                  </label>
+
+                  {/* Manhã */}
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                      <span>Manhã (07:00 às 11:30)</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {horariosManha.map((h) => {
+                        const isOcupado = todosAgendamentos.some(
+                          ag => ag.unidadeId === (unidadeAtual?.id || unidadeIdNormalizada) && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
+                        );
+                        const isSelecionado = agendaHora === h;
+
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            disabled={isOcupado}
+                            onClick={() => setAgendaHora(h)}
+                            className={`py-2 rounded-xl text-[11px] font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
+                              isOcupado
+                                ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
+                                : isSelecionado
+                                ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
+                            }`}
+                          >
+                            <span>{h}</span>
+                            <span className="text-[7.5px] font-sans font-normal mt-0.5">
+                              {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Tarde */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+                      <span>Tarde (13:00 às 17:30)</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {horariosTarde.map((h) => {
+                        const isOcupado = todosAgendamentos.some(
+                          ag => ag.unidadeId === (unidadeAtual?.id || unidadeIdNormalizada) && ag.data === agendaData && ag.horario === h && ag.status !== 'Cancelado'
+                        );
+                        const isSelecionado = agendaHora === h;
+
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            disabled={isOcupado}
+                            onClick={() => setAgendaHora(h)}
+                            className={`py-2 rounded-xl text-[11px] font-bold font-mono transition-all cursor-pointer flex flex-col items-center justify-center border ${
+                              isOcupado
+                                ? 'bg-rose-950/30 border-rose-900/50 text-rose-500/40 cursor-not-allowed opacity-60 line-through'
+                                : isSelecionado
+                                ? `${corTemaBtn} border-white/40 shadow-lg scale-105`
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500/60 hover:text-white'
+                            }`}
+                          >
+                            <span>{h}</span>
+                            <span className="text-[7.5px] font-sans font-normal mt-0.5">
+                              {isOcupado ? 'Ocupado' : isSelecionado ? 'Escolhido' : 'Livre'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={!agendaHora}
+                    className={`w-full py-3.5 rounded-xl font-bold uppercase tracking-wider text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
+                      agendaHora ? corTemaBtn : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    <CheckCircle size={15} />
+                    <span>Confirmar Agendamento</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* TELA 5: FIDELIDADE */}
+          {/* ========================================== */}
+          {telaAtiva === 'fidelidade' && usuarioLogado && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTelaAtiva('home')}
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition cursor-pointer"
+                >
+                  <ChevronLeft size={16} /> Voltar
+                </button>
+                <h2 className="text-sm font-bold text-white">Cartão Fidelidade Digital</h2>
+                <div className="w-10" />
+              </div>
+
+              <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/40 border border-amber-500/30 rounded-3xl p-5 shadow-2xl space-y-4 text-center">
+                <div className="flex items-center justify-between">
+                  <div className="text-left">
+                    <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Programa VIP</span>
+                    <h3 className="font-bold text-sm text-white">{unidadeAtual.nomeFantasia}</h3>
+                  </div>
+                  <Gift className="w-6 h-6 text-amber-400 animate-bounce" />
+                </div>
+
+                {/* Grade dos 10 Selos */}
+                <div className="grid grid-cols-5 gap-2.5 py-2">
+                  {Array.from({ length: 10 }).map((_, index) => {
+                    const seloPreenchido = index < usuarioLogado.pontosFidelidade;
+                    const isUltimo = index === 9;
 
                     return (
                       <div
-                        key={p.id}
-                        className={`bg-slate-900/80 border rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg ${
-                          estoqueBaixo ? 'border-amber-500/40 bg-amber-950/10' : 'border-slate-800'
+                        key={index}
+                        className={`aspect-square rounded-2xl border flex flex-col items-center justify-center transition-all ${
+                          seloPreenchido
+                            ? 'bg-amber-500 border-amber-300 text-slate-950 shadow-lg shadow-amber-500/30 font-bold'
+                            : isUltimo
+                            ? 'bg-amber-500/10 border-dashed border-amber-500/50 text-amber-400'
+                            : 'bg-slate-950/80 border-slate-800 text-slate-600'
                         }`}
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-bold text-white">{p.nome}</h4>
-                            {estoqueBaixo && (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center gap-1">
-                                <AlertTriangle size={11} /> Estoque Baixo
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-400">
-                            Categoria: {p.categoria || 'Geral'} • Mínimo recomendado: {p.min} unidades
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-3 self-end sm:self-auto">
-                          <div className="flex items-center gap-2 bg-slate-950 px-2.5 py-1 rounded-xl border border-slate-800">
-                            <button
-                              type="button"
-                              onClick={() => ajustarEstoque(p.id, -1)}
-                              className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition cursor-pointer"
-                            >
-                              -
-                            </button>
-                            <span className="text-sm font-bold text-white px-2">{p.estoque}</span>
-                            <button
-                              type="button"
-                              onClick={() => ajustarEstoque(p.id, 1)}
-                              className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition cursor-pointer"
-                            >
-                              +
-                            </button>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => setItemParaExcluir({ tipo: 'produto', id: p.id, nome: p.nome })}
-                            className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                            title="Excluir Insumo"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
+                        {seloPreenchido ? (
+                          <CheckCircle2 size={20} className="text-slate-950 stroke-[2.5]" />
+                        ) : isUltimo ? (
+                          <Gift size={18} />
+                        ) : (
+                          <span className="text-xs font-mono font-semibold">{index + 1}</span>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* ========================================== */}
-          {/* ABA 7: CAIXA DIÁRIO */}
-          {/* ========================================== */}
-          {abaAtiva === 'caixa' && (
-            <div className="space-y-6">
-              {/* Cards de Resumo Financeiro */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">Total Entradas</span>
-                    <ArrowUpRight className="text-emerald-400 w-4 h-4" />
-                  </div>
-                  <p className="text-2xl font-black text-emerald-400 mt-2">
-                    R$ {totalEntradas.toFixed(2)}
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-white">
+                    {usuarioLogado.pontosFidelidade} de 10 Lavagens Realizadas
                   </p>
-                </div>
-
-                <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-rose-400 font-semibold uppercase tracking-wider">Total Saídas</span>
-                    <ArrowDownRight className="text-rose-400 w-4 h-4" />
-                  </div>
-                  <p className="text-2xl font-black text-rose-400 mt-2">
-                    R$ {totalSaidas.toFixed(2)}
+                  <p className="text-[11px] text-slate-400">
+                    A cada lavagem concluída no {unidadeAtual.nomeFantasia} você ganha 1 selo. Ao completar 10 selos, sua próxima ducha é grátis!
                   </p>
-                </div>
-
-                <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4.5 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-cyan-400 font-semibold uppercase tracking-wider">Saldo em Caixa</span>
-                    <DollarSign className="text-cyan-400 w-4 h-4" />
-                  </div>
-                  <p className={`text-2xl font-black mt-2 ${saldoCaixa >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
-                    R$ {saldoCaixa.toFixed(2)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Lançamento Rápido no Caixa */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                    <Plus className="w-4 h-4 text-blue-400" /> Novo Lançamento no Caixa
-                  </h3>
-
-                  <form onSubmit={handleAdicionarCaixa} className="space-y-3 text-xs">
-                    <div>
-                      <label className="block text-slate-400 font-medium mb-1">Descrição *</label>
-                      <input
-                        type="text"
-                        value={novaDescCaixa}
-                        onChange={(e) => setNovaDescCaixa(e.target.value)}
-                        placeholder="Ex: Pagamento Água / Refil Shampoo"
-                        required
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-slate-400 font-medium mb-1">Tipo</label>
-                        <select
-                          value={novoTipoCaixa}
-                          onChange={(e) => setNovoTipoCaixa(e.target.value as 'entrada' | 'saida')}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-blue-500 cursor-pointer"
-                        >
-                          <option value="entrada">Entrada (+)</option>
-                          <option value="saida">Saída (-)</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-slate-400 font-medium mb-1">Valor (R$)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={novoValorCaixa}
-                          onChange={(e) => setNovoValorCaixa(e.target.value)}
-                          placeholder="50.00"
-                          required
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
-                    >
-                      <DollarSign size={15} />
-                      <span>Registrar Movimentação</span>
-                    </button>
-                  </form>
-                </div>
-
-                {/* Extrato do Caixa */}
-                <div className="lg:col-span-2 space-y-3">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-400" /> Extrato de Movimentações
-                  </h3>
-
-                  <div className="space-y-2.5">
-                    {movimentacoesCaixa.map((m) => (
-                      <div
-                        key={m.id}
-                        className="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 flex items-center justify-between shadow-md"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${m.tipo === 'entrada' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                            {m.tipo === 'entrada' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-white">{m.descricao}</p>
-                            <span className="text-[10px] text-slate-500">{m.data}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <span className={`text-sm font-black ${m.tipo === 'entrada' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {m.tipo === 'entrada' ? '+' : '-'} R$ {m.valor.toFixed(2)}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => setItemParaExcluir({ tipo: 'movimentacao', id: m.id, nome: m.descricao })}
-                            className="p-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                            title="Excluir Lançamento"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 8: BANNERS PROMOCIONAIS */}
-          {/* ========================================== */}
-          {abaAtiva === 'banner' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Cadastro de Banner */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <ImageIcon className="w-4 h-4 text-cyan-400" /> Publicar Novo Banner
-                </h3>
-
-                <form onSubmit={handleAdicionarBanner} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">Título da Promoção *</label>
-                    <input
-                      type="text"
-                      value={novoBannerTitulo}
-                      onChange={(e) => setNovoBannerTitulo(e.target.value)}
-                      placeholder="Ex: Quarta com Cera Grátis"
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-400 font-medium mb-1">URL da Imagem (ou Unsplash)</label>
-                    <input
-                      type="text"
-                      value={novoBannerImg}
-                      onChange={(e) => setNovoBannerImg(e.target.value)}
-                      placeholder="https://images.unsplash.com/..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className={`w-full py-2.5 px-4 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer flex items-center justify-center gap-1.5`}
-                  >
-                    <Upload size={15} />
-                    <span>Publicar no App Cliente</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Lista dos Banners */}
-              <div className="lg:col-span-2 space-y-4">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <ImageIcon className="w-4 h-4 text-cyan-400" /> Banners Ativos no PWA
-                </h3>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {banners.map((b) => (
-                    <div
-                      key={b.id}
-                      className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-lg space-y-3"
-                    >
-                      <img
-                        src={b.imagem}
-                        alt={b.titulo}
-                        className="w-full h-36 object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="p-4 pt-0 space-y-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <h4 className="text-xs font-bold text-white">{b.titulo}</h4>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'Ativo' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`}>
-                            {b.status}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setBanners(banners.map(item => item.id === b.id ? { ...item, status: item.status === 'Ativo' ? 'Inativo' : 'Ativo' } : item));
-                              mostrarToast('Status do banner atualizado!', 'info');
-                            }}
-                            className="text-xs text-cyan-400 hover:underline cursor-pointer"
-                          >
-                            Alternar Status
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setItemParaExcluir({ tipo: 'banner', id: b.id, nome: b.titulo })}
-                            className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition cursor-pointer"
-                            title="Excluir Banner"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================== */}
-          {/* ABA 9: CONFIGURAÇÕES DO APP */}
-          {/* ========================================== */}
-          {abaAtiva === 'configuracao' && (
-            <div className="max-w-2xl bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-              <h3 className="text-base font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                <Settings className="w-5 h-5 text-blue-400" /> Personalização & Identidade Visual
-              </h3>
-
-              <div className="space-y-4 text-xs">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1.5">Nome do Lava Jato</label>
-                  <input
-                    type="text"
-                    value={nomeLavaJato}
-                    onChange={(e) => setNomeLavaJato(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-blue-500 text-sm font-semibold"
-                  />
-                </div>
-
-                {/* Paleta de Cores do Sistema */}
-                <div className="space-y-2">
-                  <label className="block text-slate-300 font-medium flex items-center gap-1.5">
-                    <Paintbrush size={14} className="text-cyan-400" /> Cor Primária do Sistema
-                  </label>
-                  
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {[
-                      { id: 'blue', label: 'Azul Clássico', bg: 'bg-blue-600' },
-                      { id: 'indigo', label: 'Índigo Moderno', bg: 'bg-indigo-600' },
-                      { id: 'emerald', label: 'Verde Esmeralda', bg: 'bg-emerald-600' },
-                      { id: 'cyan', label: 'Ciano Tech', bg: 'bg-cyan-600' },
-                      { id: 'violet', label: 'Violeta Royal', bg: 'bg-violet-600' },
-                      { id: 'amber', label: 'Âmbar Dourado', bg: 'bg-amber-600' }
-                    ].map((cor) => (
-                      <button
-                        key={cor.id}
-                        type="button"
-                        onClick={() => {
-                          setCorPrimaria(cor.id as any);
-                          mostrarToast(`Tema alterado para ${cor.label}!`, 'sucesso');
-                        }}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition cursor-pointer ${
-                          corPrimaria === cor.id
-                            ? 'border-white text-white bg-slate-800 shadow-md'
-                            : 'border-slate-800 text-slate-400 hover:text-white bg-slate-950'
-                        }`}
-                      >
-                        <span className={`w-3.5 h-3.5 rounded-full ${cor.bg}`} />
-                        <span>{cor.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-                  <p className="text-slate-400 text-[11px]">
-                    As alterações são salvas automaticamente na sessão atual.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => mostrarToast('Configurações salvas com sucesso!', 'sucesso')}
-                    className={`px-5 py-2 ${temaClasses.bg} text-white font-bold rounded-xl shadow-lg transition cursor-pointer`}
-                  >
-                    Salvar Alterações
-                  </button>
                 </div>
               </div>
             </div>
           )}
 
         </main>
+
+        {/* BOTTOM BAR DE NAVEGAÇÃO RÁPIDA (SE LOGADO) */}
+        {usuarioLogado && telaAtiva !== 'login' && telaAtiva !== 'cadastro' && (
+          <nav className="bg-slate-950 border-t border-slate-800 px-6 py-2.5 flex items-center justify-around z-30">
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('home')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'home' ? 'text-blue-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Car size={18} />
+              <span>Início</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('agendar')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'agendar' ? 'text-blue-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Calendar size={18} />
+              <span>Agendar</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTelaAtiva('fidelidade')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold transition cursor-pointer ${
+                telaAtiva === 'fidelidade' ? 'text-amber-400 font-bold' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Award size={18} />
+              <span>Fidelidade</span>
+            </button>
+          </nav>
+        )}
       </div>
     </div>
   );

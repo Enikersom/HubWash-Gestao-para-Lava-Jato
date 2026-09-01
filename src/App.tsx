@@ -79,7 +79,7 @@ export default function App() {
   const unidadeSlug = getParamSafe('unidade');
   const rotaSlug = getParamSafe('rota');
 
-  // Inicialização inteligente com base na URL
+  // Inicialização inteligente com base na URL: se houver unidade na URL (QR Code), vai direto para o cliente
   const [autenticado, setAutenticado] = useState<boolean>(() => {
     return Boolean(unidadeSlug);
   });
@@ -89,7 +89,7 @@ export default function App() {
   });
 
   const [telaClienteInicial, setTelaClienteInicial] = useState<'login' | 'cadastro' | 'home'>(() => {
-    // Se a URL for do cliente ou contiver unidade, obrigatoriamente inicia no cadastro se não houver login prévio
+    // Se a rota for login explícita, abre login; para qualquer leitura de QR Code ou rota de cadastro, obrigatoriamente CADASTRO
     if (rotaSlug === 'login') return 'login';
     return 'cadastro';
   });
@@ -111,14 +111,12 @@ export default function App() {
       setTelaAtual('cliente');
       setUnidadeSelecionada(resolverNomeUnidade(uParam.trim().toLowerCase()));
 
-      const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
-      // Se não há usuário logado ou a rota for cliente/cadastro, obriga abrir o formulário de cadastro
-      if (!sessaoSalva || rParam?.toLowerCase() === 'cliente' || rParam?.toLowerCase() === 'cadastro') {
-        setTelaClienteInicial('cadastro');
-      } else if (rParam?.toLowerCase() === 'login') {
+      if (rParam?.toLowerCase() === 'login') {
         setTelaClienteInicial('login');
       } else {
-        setTelaClienteInicial('home');
+        // Leitura de QR Code ou acesso por link de unidade sempre abre a tela de CADASTRO do cliente
+        localStorage.removeItem('hubwash_cliente_sessao');
+        setTelaClienteInicial('cadastro');
       }
     }
   }, []);

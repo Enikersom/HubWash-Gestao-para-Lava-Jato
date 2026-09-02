@@ -42,6 +42,26 @@
         "createdAt": { "type": "string" }
       },
       "required": ["unidadeId", "veiculo", "servico", "data", "horario", "status"]
+    },
+    "Unidade": {
+      "title": "Unidade",
+      "description": "Dados da unidade de lava-jato cadastrada no SaaS",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nomeFantasia": { "type": "string" },
+        "nomeProprietario": { "type": "string" },
+        "razaoSocial": { "type": "string" },
+        "cnpj": { "type": "string" },
+        "endereco": { "type": "string" },
+        "contato": { "type": "string" },
+        "senhaProvisoria": { "type": "string" },
+        "valorPlano": { "type": "number" },
+        "dataCriacao": { "type": "string" },
+        "dataExpiracao": { "type": "string" },
+        "statusPlano": { "type": "string", "enum": ["ativo", "teste", "bloqueado"] }
+      },
+      "required": ["id", "nomeFantasia", "senhaProvisoria", "statusPlano"]
     }
   },
   "firestore": {
@@ -52,6 +72,10 @@
     "/agendamentos/{agendamentoId}": {
       "schema": { "$ref": "#/entities/Agendamento" },
       "description": "Coleção de agendamentos em tempo real"
+    },
+    "/unidades/{unidadeId}": {
+      "schema": { "$ref": "#/entities/Unidade" },
+      "description": "Coleção de unidades e lava-jatos cadastrados"
     }
   }
 }

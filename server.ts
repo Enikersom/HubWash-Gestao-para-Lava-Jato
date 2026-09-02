@@ -30,18 +30,69 @@ function carregarBanco(): DatabaseSchema {
   try {
     if (fs.existsSync(DB_FILE)) {
       const conteudo = fs.readFileSync(DB_FILE, "utf-8");
-      return JSON.parse(conteudo);
+      const parsed = JSON.parse(conteudo);
+      
+      // Garante que se houver lista de unidades, não fiquem bloqueadas indevidamente
+      if (Array.isArray(parsed.lavaJatos) && parsed.lavaJatos.length > 0) {
+        parsed.lavaJatos = parsed.lavaJatos.map((u: any) => ({
+          ...u,
+          statusPlano: u.statusPlano === 'bloqueado' ? 'ativo' : (u.statusPlano || 'ativo')
+        }));
+      } else {
+        const hoje = new Date();
+        const expiracao = new Date();
+        expiracao.setDate(hoje.getDate() + 365);
+        parsed.lavaJatos = [
+          {
+            id: 'pitstop',
+            nomeFantasia: 'Pit Stop Lava Jato',
+            nomeProprietario: 'Carlos Silva',
+            razaoSocial: 'C. Silva Lavagens LTDA',
+            cnpj: '12.345.678/0001-99',
+            endereco: 'Av. Central, 1500 - Centro',
+            contato: '(11) 99999-8888',
+            senhaProvisoria: 'pit123',
+            valorPlano: 149.90,
+            dataCriacao: hoje.toLocaleDateString('pt-BR'),
+            dataExpiracao: expiracao.toLocaleDateString('pt-BR'),
+            statusPlano: 'ativo'
+          }
+        ];
+      }
+      return parsed;
     }
   } catch (err) {
     console.warn("Erro ao ler banco local, iniciando padrão:", err);
   }
-  return {
+
+  const hoje = new Date();
+  const expiracao = new Date();
+  expiracao.setDate(hoje.getDate() + 365);
+
+  const inicial: DatabaseSchema = {
     clientes: [],
     agendamentos: [],
     fila: [],
     historico: [],
-    lavaJatos: []
+    lavaJatos: [
+      {
+        id: 'pitstop',
+        nomeFantasia: 'Pit Stop Lava Jato',
+        nomeProprietario: 'Carlos Silva',
+        razaoSocial: 'C. Silva Lavagens LTDA',
+        cnpj: '12.345.678/0001-99',
+        endereco: 'Av. Central, 1500 - Centro',
+        contato: '(11) 99999-8888',
+        senhaProvisoria: 'pit123',
+        valorPlano: 149.90,
+        dataCriacao: hoje.toLocaleDateString('pt-BR'),
+        dataExpiracao: expiracao.toLocaleDateString('pt-BR'),
+        statusPlano: 'ativo'
+      }
+    ]
   };
+  salvarBanco(inicial);
+  return inicial;
 }
 
 function salvarBanco(dados: DatabaseSchema) {
@@ -237,12 +288,63 @@ app.delete("/api/fila/:id", (req, res) => {
   res.json({ success: true });
 });
 
+// --- UNIDADES / LAVA-JATOS (SaaS) ---
+app.get("/api/unidades", (_req, res) => {
+  res.json(dbMemory.lavaJatos);
+});
+
+app.post("/api/unidades", (req, res) => {
+  const novaUnidade = req.body;
+  if (!novaUnidade.nomeFantasia || !novaUnidade.id) {
+    return res.status(400).json({ error: "Nome Fantasia e ID são obrigatórios" });
+  }
+
+  const formatada = {
+    ...novaUnidade,
+    statusPlano: novaUnidade.statusPlano || 'ativo',
+    updatedAt: new Date().toISOString()
+  };
+
+  const idx = dbMemory.lavaJatos.findIndex(u => u.id === formatada.id);
+  if (idx >= 0) {
+    dbMemory.lavaJatos[idx] = { ...dbMemory.lavaJatos[idx], ...formatada };
+  } else {
+    dbMemory.lavaJatos.unshift(formatada);
+  }
+
+  salvarBanco(dbMemory);
+  res.status(201).json(formatada);
+});
+
+app.patch("/api/unidades/:id", (req, res) => {
+  const { id } = req.params;
+  const idx = dbMemory.lavaJatos.findIndex(u => u.id === id);
+  if (idx >= 0) {
+    dbMemory.lavaJatos[idx] = {
+      ...dbMemory.lavaJatos[idx],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    salvarBanco(dbMemory);
+    return res.json(dbMemory.lavaJatos[idx]);
+  }
+  res.status(404).json({ error: "Unidade não encontrada" });
+});
+
+app.delete("/api/unidades/:id", (req, res) => {
+  const { id } = req.params;
+  dbMemory.lavaJatos = dbMemory.lavaJatos.filter(u => u.id !== id);
+  salvarBanco(dbMemory);
+  res.json({ success: true });
+});
+
 // --- STATUS GERAL DE SINCRONIZAÇÃO ---
 app.get("/api/sync", (req, res) => {
   const unidadeId = req.query.unidadeId ? String(req.query.unidadeId).toLowerCase() : null;
   let clientes = dbMemory.clientes;
   let agendamentos = dbMemory.agendamentos;
   let fila = dbMemory.fila;
+  let unidades = dbMemory.lavaJatos;
 
   if (unidadeId) {
     clientes = clientes.filter(c => {
@@ -263,7 +365,8 @@ app.get("/api/sync", (req, res) => {
     timestamp: Date.now(),
     clientes,
     agendamentos,
-    fila
+    fila,
+    unidades
   });
 });
 

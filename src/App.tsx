@@ -1,12 +1,9 @@
 // @ts-ignore
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, onSnapshot, query, where, orderBy, deleteDoc, doc } from 'firebase/firestore';
-import { Car, Calendar, Award, Building2, AlertTriangle, XCircle, User } from 'lucide-react';
+import { getFirestore, collection, addDoc, onSnapshot, query, where, deleteDoc, doc } from 'firebase/firestore';
+import { Car, Calendar, Building2, AlertTriangle, XCircle, User } from 'lucide-react';
 
-// ==========================================
-// CONFIGURAÇÃO SEGURA DO FIREBASE (VIA .ENV)
-// ==========================================
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -16,7 +13,6 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Inicializa o Firebase apontando para o banco padrão (default)
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
@@ -54,16 +50,13 @@ export default function App() {
   const [modoVisao, setModoVisao] = useState<'gerente_empresa' | 'app_cliente'>('app_cliente');
   const [carregando, setCarregando] = useState(true);
 
-  // Listas reais sincronizadas com o Firebase Firestore
   const [clientesBanco, setClientesBanco] = useState<Cliente[]>([]);
   const [agendamentosBanco, setAgendamentosBanco] = useState<Agendamento[]>([]);
 
-  // Estados do Usuário Logado no celular
   const [usuarioLogado, setUsuarioLogado] = useState<Cliente | null>(null);
   const [telaClienteAtiva, setTelaClienteAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar'>('cadastro');
   const [enviandoFormulario, setEnviandoFormulario] = useState(false);
 
-  // Formulários
   const [cadEmail, setCadEmail] = useState('');
   const [cadSenha, setCadSenha] = useState('');
   const [cadNome, setCadNome] = useState('');
@@ -83,7 +76,6 @@ export default function App() {
     { id: 'pitstop', nomeFantasia: 'Pit Stop Lava Jato' }
   ];
 
-  // 🔄 LEITURA INTELIGENTE DE ROTAS E SESSÃO SALVA
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const slugURL = params.get('unidade');
@@ -104,7 +96,6 @@ export default function App() {
       
       if (rotaURL === 'cliente' || !slugURL) {
         setModoVisao('app_cliente');
-        // Verifica se o cliente já estava logado antes neste celular para não mandar para o cadastro
         const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
         if (sessaoSalva) {
           setUsuarioLogado(JSON.parse(sessaoSalva));
@@ -119,18 +110,15 @@ export default function App() {
     setCarregando(false);
   }, []);
 
-  // 🛰️ ESCUTA DO FIRESTORE EM TEMPO REAL PARA O NOTEBOOK E CELULAR
   useEffect(() => {
     if (!unidadeAtual) return;
 
-    // Sincroniza Clientes
     const qClientes = query(collection(db, 'clientes'), where('unidadeVinculadaId', '==', unidadeAtual.id));
     const unsubClientes = onSnapshot(qClientes, (snapshot) => {
       const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Cliente));
       setClientesBanco(lista);
     });
 
-    // Sincroniza Agendamentos
     const qAgendamentos = query(collection(db, 'agendamentos'), where('unidadeId', '==', unidadeAtual.id));
     const unsubAgendamentos = onSnapshot(qAgendamentos, (snapshot) => {
       const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Agendamento));
@@ -143,12 +131,11 @@ export default function App() {
     };
   }, [unidadeAtual]);
 
-  // ➡️ CADASTRO SEGURO COM TRAVA ANTI-DUPLICAÇÃO
   const handleCadastroCliente = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cadNome || !cadEmail || !cadSenha || !cadPlaca || !unidadeAtual || enviandoFormulario) return;
 
-    setEnviandoFormulario(true); // Liga a trava eletrônica de clique
+    setEnviandoFormulario(true);
 
     try {
       const novoCliente: Cliente = {
@@ -163,42 +150,42 @@ export default function App() {
       };
 
       await addDoc(collection(db, 'clientes'), novoCliente);
-      
-      // Salva na memória do telefone para nunca mais deslogar sozinho
       localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(novoCliente));
-      
       setUsuarioLogado(novoCliente);
-      setTelaClienteAtiva('home'); // Avança de tela imediatamente
+      setTelaClienteAtiva('home');
       
-      // Limpa os campos do formulário
       setCadNome(''); setCadEmail(''); setCadSenha(''); setCadContato(''); setCadModelo(''); setCadPlaca('');
       alert('Cadastro realizado com sucesso!');
     } catch (erro) {
       alert('Erro ao salvar no banco.');
     } finally {
-      setEnviandoFormulario(false); // Desliga a trava
+      setEnviandoFormulario(false);
     }
   };
 
-  // ➡️ LOGIN REAL
   const handleLoginCliente = (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginEmail || !loginSenha || !unidadeAtual) return;
 
     const encontrado = clientesBanco.find(
-      c => c.email.toLowerCase() === loginEmail.toLowerCase().trim() && c.senhaAcesso === loginSenha
+      c => c.email.toLowerCase().trim() === loginEmail.toLowerCase().trim()
     );
 
     if (encontrado) {
-      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(encontrado));
-      setUsuarioLogado(encontrado);
-      setTelaClienteAtiva('home');
+      if (encontrado.senhaAcesso === loginSenha) {
+        localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(encontrado));
+        setUsuarioLogado(encontrado);
+        setTelaClienteAtiva('home');
+        alert(`Bem-vindo de volta, ${encontrado.nome}!`);
+      } else {
+        alert('❌ Senha incorreta.');
+      }
     } else {
-      alert('E-mail ou senha incorretos.');
+      alert('❌ E-mail não localizado nesta unidade. Faça o cadastro.');
+      setTelaClienteAtiva('cadastro');
     }
   };
 
-  // ➡️ AGENDAMENTO REAL COM TRAVA DE DOIS CLIQUES
   const handleAgendarServico = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!agendaData || !agendaHora || !unidadeAtual || !usuarioLogado || enviandoFormulario) return;
@@ -239,9 +226,8 @@ export default function App() {
   };
 
   if (carregando) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-xs font-mono text-slate-400">Conectando...</div>;
-  if (!unidadeAtual) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-xs font-bold text-white"><AlertTriangle className="mr-2 text-amber-400" /> Use o QR Code oficial da empresa.</div>;
+  if (!unidadeAtual) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-xs font-bold text-white"><AlertTriangle className="mr-2 text-amber-400" /> Use o QR Code oficial.</div>;
 
-  // VISÃO 1: CELULAR DO CLIENTE
   if (modoVisao === 'app_cliente') {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-0 sm:p-4">
@@ -254,3 +240,7 @@ export default function App() {
           <main className="flex-1 p-5 overflow-y-auto space-y-4">
             {telaClienteAtiva === 'cadastro' && (
               <form onSubmit={handleCadastroCliente} className="space-y-3 text-xs font-semibold">
+                <div className="text-center bg-blue-500/5 border border-blue-500/10 p-3 rounded-xl mb-2 text-blue-400 text-[11px]">Primeiro acesso: Faça seu cadastro rápido</div>
+                <input type="email" required value={cadEmail} onChange={e => setCadEmail(e.target.value)} placeholder="Seu melhor E-mail *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />
+                <input type="password" required value={cadSenha} onChange={e => setCadSenha(e.target.value)} placeholder="Crie sua Senha *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />
+                <input type="text" required value={cadNome} onChange={e => setCadNome(e.target.value)} placeholder="Nome Completo *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />

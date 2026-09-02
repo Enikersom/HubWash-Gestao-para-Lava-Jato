@@ -11,9 +11,15 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Default deny para outros documentos
+    // Regra para Unidades / Lava-Jatos
+    match /unidades/{unidadeId} {
+      allow read, write: if true;
+    }
+
+    // Default permissivo para desenvolvimento e testes
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
   }
 }
+

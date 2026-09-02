@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserPlus, LogIn } from 'lucide-react';
+import { buscarUnidadesServidor } from '../services/apiSync';
 
 interface LoginOTPProps {
   onSuccess: (role?: 'master' | 'lavajato' | 'cliente', unidadeNome?: string, telaCliente?: 'login' | 'cadastro' | 'home') => void;
@@ -18,6 +19,17 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
   const SENHA_MASTER = '124020';
 
   const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Carrega lista atualizada de unidades do servidor ao montar tela de login
+  useEffect(() => {
+    buscarUnidadesServidor().then(unidades => {
+      if (Array.isArray(unidades) && unidades.length > 0) {
+        try {
+          localStorage.setItem('hubwash_lava_jatos', JSON.stringify(unidades));
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
 
   // Focus first input on mount
   useEffect(() => {
@@ -77,7 +89,7 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
     inputsRef.current[nextIndex]?.focus();
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     const fullOtp = otp.join('').trim();
 
     if (fullOtp.length < 6) {
@@ -88,75 +100,67 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
     setIsVerifying(true);
     setMessage({ text: 'Validando credenciais...', type: 'info' });
 
-    setTimeout(() => {
-      // 1. Verificação da Senha Master: 124020
-      if (fullOtp === SENHA_MASTER) {
-        setIsVerifying(false);
-        setIsSuccess(true);
-        setTimeout(() => {
-          onSuccess('master');
-        }, 700);
-        return;
-      }
+    // 1. Verificação da Senha Master: 124020
+    if (fullOtp === SENHA_MASTER) {
+      setIsVerifying(false);
+      setIsSuccess(true);
+      setTimeout(() => {
+        onSuccess('master');
+      }, 500);
+      return;
+    }
 
-      // 2. Verificação dinâmica com lava-jatos cadastrados no banco
-      let unidadeEncontrada: any = null;
-      try {
+    // 2. Verificação dinâmica com lava-jatos cadastrados no banco
+    let unidadeEncontrada: any = null;
+    try {
+      // Tenta obter do servidor primeiro
+      const doServidor = await buscarUnidadesServidor();
+      let lista = Array.isArray(doServidor) && doServidor.length > 0 ? doServidor : [];
+      
+      if (lista.length === 0) {
         const salvos = localStorage.getItem('hubwash_lava_jatos');
-        let lista: any[] = [];
         if (salvos) {
           lista = JSON.parse(salvos);
-        } else {
-          // Inicializa lista padrão se ainda não existir
-          lista = [
-            {
-              id: 'pitstop',
-              nomeFantasia: 'Pit Stop Lava Jato',
-              senhaProvisoria: 'pit123',
-              statusPlano: 'ativo'
-            }
-          ];
-          localStorage.setItem('hubwash_lava_jatos', JSON.stringify(lista));
         }
-
-        if (Array.isArray(lista)) {
-          const fullOtpLower = fullOtp.toLowerCase();
-          unidadeEncontrada = lista.find((u: any) => {
-            const senhaSalva = String(u.senhaProvisoria || '').trim();
-            return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
-          });
-        }
-      } catch (e) {
-        console.error(e);
       }
 
-      if (unidadeEncontrada) {
-        if (unidadeEncontrada.statusPlano === 'bloqueado') {
-          setIsVerifying(false);
-          setMessage({
-            text: `Acesso bloqueado para "${unidadeEncontrada.nomeFantasia}". Entre em contato com o suporte SaaS.`,
-            type: 'error'
-          });
-          setOtp(['', '', '', '', '', '']);
-          inputsRef.current[0]?.focus();
-          return;
-        }
+      if (Array.isArray(lista)) {
+        const fullOtpLower = fullOtp.toLowerCase();
+        unidadeEncontrada = lista.find((u: any) => {
+          const senhaSalva = String(u.senhaProvisoria || '').trim();
+          return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
 
-        setIsVerifying(false);
-        setIsSuccess(true);
-        setTimeout(() => {
-          onSuccess('lavajato', unidadeEncontrada.nomeFantasia);
-        }, 700);
-      } else {
+    if (unidadeEncontrada) {
+      if (unidadeEncontrada.statusPlano === 'bloqueado') {
         setIsVerifying(false);
         setMessage({
-          text: 'Senha incorreta ou inexistente! Verifique os dígitos e tente novamente.',
+          text: `Acesso bloqueado para "${unidadeEncontrada.nomeFantasia}". Entre em contato com o suporte SaaS.`,
           type: 'error'
         });
         setOtp(['', '', '', '', '', '']);
         inputsRef.current[0]?.focus();
+        return;
       }
-    }, 500);
+
+      setIsVerifying(false);
+      setIsSuccess(true);
+      setTimeout(() => {
+        onSuccess('lavajato', unidadeEncontrada.nomeFantasia);
+      }, 500);
+    } else {
+      setIsVerifying(false);
+      setMessage({
+        text: 'Senha incorreta ou inexistente! Verifique os dígitos e tente novamente.',
+        type: 'error'
+      });
+      setOtp(['', '', '', '', '', '']);
+      inputsRef.current[0]?.focus();
+    }
   };
 
   const preencherSenha = (senha: string) => {

@@ -30,6 +30,21 @@ import {
 } from 'lucide-react';
 import { LavaJato } from '../types';
 import { URL_BASE_NETLIFY } from '../App';
+import { 
+  db, 
+  collection, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot 
+} from '../firebase';
+import {
+  buscarUnidadesServidor,
+  salvarUnidadeServidor,
+  atualizarStatusUnidadeServidor,
+  excluirUnidadeServidor
+} from '../services/apiSync';
 
 interface AdminMasterProps {
   onLogout?: () => void;
@@ -43,7 +58,12 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
     if (saved) {
       try {
         const parsed: LavaJato[] = JSON.parse(saved);
-        return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map(u => ({
+            ...u,
+            statusPlano: u.statusPlano === 'bloqueado' ? 'ativo' : (u.statusPlano || 'ativo')
+          }));
+        }
       } catch (e) {
         console.error(e);
       }
@@ -84,17 +104,42 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
     }, 3500);
   };
 
-  useEffect(() => {
-    const dadosSalvos = localStorage.getItem('hubwash_lava_jatos');
-    if (!dadosSalvos) {
-      const hoje = new Date();
-      const dataAntiga = new Date();
-      dataAntiga.setDate(hoje.getDate() - 25);
-      const expiracaoAntiga = new Date(dataAntiga);
-      expiracaoAntiga.setDate(dataAntiga.getDate() + 20);
+  const salvarLavaJatosLocal = (novos: LavaJato[]) => {
+    setLavaJatos(novos);
+    try {
+      localStorage.setItem('hubwash_lava_jatos', JSON.stringify(novos));
+    } catch (e) {
+      console.warn('Erro ao salvar no localStorage:', e);
+    }
+  };
 
-      const unidadesIniciais: LavaJato[] = [
-        {
+  // SINCRONIZAÇÃO EM TEMPO REAL (SERVIDOR + FIRESTORE + LOCALSTORAGE)
+  useEffect(() => {
+    let cancelado = false;
+
+    const carregarDadosIniciais = async () => {
+      try {
+        const unidadesServidor = await buscarUnidadesServidor();
+        if (!cancelado && Array.isArray(unidadesServidor) && unidadesServidor.length > 0) {
+          const formatadas = unidadesServidor.map(u => ({
+            ...u,
+            statusPlano: u.statusPlano === 'bloqueado' ? 'ativo' : (u.statusPlano || 'ativo')
+          }));
+          salvarLavaJatosLocal(formatadas);
+          return;
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar unidades da API:', err);
+      }
+
+      // Se não há dados no servidor nem no localStorage, cria a unidade padrão ATIVA
+      const dadosSalvos = localStorage.getItem('hubwash_lava_jatos');
+      if (!dadosSalvos || dadosSalvos === '[]') {
+        const hoje = new Date();
+        const expiracao = new Date();
+        expiracao.setDate(hoje.getDate() + 365);
+
+        const unidadePadrao: LavaJato = {
           id: 'pitstop',
           nomeFantasia: 'Pit Stop Lava Jato',
           nomeProprietario: 'Carlos Silva',
@@ -104,20 +149,72 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
           contato: '(11) 99999-8888',
           senhaProvisoria: 'pit123',
           valorPlano: 149.90,
-          dataCriacao: dataAntiga.toLocaleDateString('pt-BR'),
-          dataExpiracao: expiracaoAntiga.toLocaleDateString('pt-BR'),
-          statusPlano: 'bloqueado'
-        }
-      ];
-      setLavaJatos(unidadesIniciais);
-      localStorage.setItem('hubwash_lava_jatos', JSON.stringify(unidadesIniciais));
-    }
-  }, []);
+          dataCriacao: hoje.toLocaleDateString('pt-BR'),
+          dataExpiracao: expiracao.toLocaleDateString('pt-BR'),
+          statusPlano: 'ativo'
+        };
 
-  const salvarLavaJatos = (novos: LavaJato[]) => {
-    setLavaJatos(novos);
-    localStorage.setItem('hubwash_lava_jatos', JSON.stringify(novos));
-  };
+        salvarLavaJatosLocal([unidadePadrao]);
+        salvarUnidadeServidor(unidadePadrao).catch(() => {});
+        if (db) {
+          setDoc(doc(db, 'unidades', unidadePadrao.id), unidadePadrao).catch(() => {});
+        }
+      }
+    };
+
+    carregarDadosIniciais();
+
+    // 1. OUVINTE EM TEMPO REAL DO FIRESTORE (se configurado)
+    let unsubscribeFirestore: (() => void) | null = null;
+    if (db) {
+      try {
+        unsubscribeFirestore = onSnapshot(collection(db, 'unidades'), (snapshot) => {
+          if (!snapshot.empty) {
+            const doFirestore: LavaJato[] = [];
+            snapshot.forEach((docItem) => {
+              const d = docItem.data() as LavaJato;
+              doFirestore.push({
+                ...d,
+                id: d.id || docItem.id,
+                statusPlano: d.statusPlano || 'ativo'
+              });
+            });
+            if (!cancelado && doFirestore.length > 0) {
+              salvarLavaJatosLocal(doFirestore);
+            }
+          }
+        }, (err) => {
+          console.warn('Ouvinte Firestore unidades:', err);
+        });
+      } catch (e) {
+        console.warn('Erro ao inicializar onSnapshot de unidades:', e);
+      }
+    }
+
+    // 2. POLLING CONTÍNUO COM O SERVIDOR (a cada 3.5 segundos)
+    const intervalId = setInterval(async () => {
+      try {
+        const doServidor = await buscarUnidadesServidor();
+        if (!cancelado && Array.isArray(doServidor) && doServidor.length > 0) {
+          setLavaJatos(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(doServidor)) {
+              try {
+                localStorage.setItem('hubwash_lava_jatos', JSON.stringify(doServidor));
+              } catch {}
+              return doServidor;
+            }
+            return prev;
+          });
+        }
+      } catch {}
+    }, 3500);
+
+    return () => {
+      cancelado = true;
+      if (unsubscribeFirestore) unsubscribeFirestore();
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const gerarSlug = (texto: string) => {
     return texto
@@ -129,7 +226,7 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
       .trim();
   };
 
-  const handleCadastrar = (e: React.FormEvent) => {
+  const handleCadastrar = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!nomeFantasia.trim() || !nomeProprietario.trim() || !cnpj.trim() || !senhaProvisoria.trim()) {
@@ -146,7 +243,7 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
 
     const hoje = new Date();
     const dataExpiracao = new Date();
-    dataExpiracao.setDate(hoje.getDate() + 20);
+    dataExpiracao.setDate(hoje.getDate() + 30); // 30 dias de teste/ativação garantida
 
     const novoLavaJato: LavaJato = {
       id: slug,
@@ -160,11 +257,27 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
       valorPlano: parseFloat(valorPlano) || 0,
       dataCriacao: hoje.toLocaleDateString('pt-BR'),
       dataExpiracao: dataExpiracao.toLocaleDateString('pt-BR'),
-      statusPlano: 'teste'
+      statusPlano: 'ativo' // Começa sempre ativo e desbloqueado
     };
 
     const atualizados = [novoLavaJato, ...lavaJatos];
-    salvarLavaJatos(atualizados);
+    salvarLavaJatosLocal(atualizados);
+
+    // Persistência robusta no servidor backend
+    try {
+      await salvarUnidadeServidor(novoLavaJato);
+    } catch (err) {
+      console.warn('Erro ao salvar unidade no servidor:', err);
+    }
+
+    // Persistência no Cloud Firestore
+    try {
+      if (db) {
+        await setDoc(doc(db, 'unidades', slug), novoLavaJato);
+      }
+    } catch (err) {
+      console.warn('Erro ao salvar unidade no Firestore:', err);
+    }
     
     // CONFIGURA O QR CODE PARA APARECER LOGO APÓS O CADASTRO
     const urlOrigem = typeof window !== 'undefined' && window.location.origin.includes('netlify.app') 
@@ -186,7 +299,7 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
     setSenhaProvisoria('');
     setValorPlano('149.90');
 
-    mostrarToast(`Lava-jato "${novoLavaJato.nomeFantasia}" cadastrado com sucesso!`, 'sucesso');
+    mostrarToast(`Lava-jato "${novoLavaJato.nomeFantasia}" cadastrado e ativado com sucesso!`, 'sucesso');
   };
 
   // FUNÇÃO PARA GERAR O QR CODE VISUAL VIA API GRATUITA
@@ -202,18 +315,38 @@ export default function AdminMaster({ onLogout, onIrParaLavaJato, onIrParaClient
     });
   };
 
-  const confirmarExclusao = () => {
+  const confirmarExclusao = async () => {
     if (!itemParaExcluir) return;
     const filtrados = lavaJatos.filter(lj => lj.id !== itemParaExcluir.id);
-    salvarLavaJatos(filtrados);
+    salvarLavaJatosLocal(filtrados);
+
+    try {
+      await excluirUnidadeServidor(itemParaExcluir.id);
+      if (db) {
+        await deleteDoc(doc(db, 'unidades', itemParaExcluir.id));
+      }
+    } catch (err) {
+      console.warn('Erro ao excluir unidade remotamente:', err);
+    }
+
     mostrarToast(`Lava-jato "${itemParaExcluir.nomeFantasia}" excluído do sistema SaaS!`, 'info');
     setItemParaExcluir(null);
   };
 
-  const alternarStatusPlano = (id: string, novoStatus: 'teste' | 'ativo' | 'bloqueado') => {
+  const alternarStatusPlano = async (id: string, novoStatus: 'teste' | 'ativo' | 'bloqueado') => {
     const atualizados = lavaJatos.map(lj => lj.id === id ? { ...lj, statusPlano: novoStatus } : lj);
-    salvarLavaJatos(atualizados);
-    mostrarToast('Status do plano atualizado com sucesso!', 'sucesso');
+    salvarLavaJatosLocal(atualizados);
+
+    try {
+      await atualizarStatusUnidadeServidor(id, novoStatus);
+      if (db) {
+        await updateDoc(doc(db, 'unidades', id), { statusPlano: novoStatus });
+      }
+    } catch (err) {
+      console.warn('Erro ao atualizar status da unidade:', err);
+    }
+
+    mostrarToast(`Status do plano atualizado para "${novoStatus.toUpperCase()}"!`, 'sucesso');
   };
 
   const toggleSenha = (id: string) => {

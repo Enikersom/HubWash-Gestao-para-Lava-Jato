@@ -4,6 +4,8 @@
  * no computador/notebook do administrador no escritório e vice-versa.
  */
 
+import { LavaJato } from '../types';
+
 export interface ClienteSync {
   id?: string;
   nome: string;
@@ -48,9 +50,10 @@ export interface AgendamentoSync {
 }
 
 // 1. Obter dados completos sincronizados da unidade
-export async function buscarDadosSincronizados(unidadeId: string) {
+export async function buscarDadosSincronizados(unidadeId?: string) {
   try {
-    const res = await fetch(`/api/sync?unidadeId=${encodeURIComponent(unidadeId)}`, {
+    const url = unidadeId ? `/api/sync?unidadeId=${encodeURIComponent(unidadeId)}` : '/api/sync';
+    const res = await fetch(url, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     });
@@ -61,6 +64,64 @@ export async function buscarDadosSincronizados(unidadeId: string) {
     // Modo offline ou fallback silencioso
   }
   return null;
+}
+
+// --- GESTÃO DE UNIDADES (SaaS) ---
+export async function buscarUnidadesServidor(): Promise<LavaJato[]> {
+  try {
+    const res = await fetch('/api/unidades', {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Fallback buscar unidades:', err);
+  }
+  return [];
+}
+
+export async function salvarUnidadeServidor(unidade: LavaJato): Promise<LavaJato | null> {
+  try {
+    const res = await fetch('/api/unidades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(unidade)
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Erro ao persistir unidade no servidor:', err);
+  }
+  return null;
+}
+
+export async function atualizarStatusUnidadeServidor(id: string, statusPlano: 'ativo' | 'teste' | 'bloqueado'): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/unidades/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statusPlano })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Erro ao atualizar status da unidade no servidor:', err);
+    return false;
+  }
+}
+
+export async function excluirUnidadeServidor(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/unidades/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Erro ao excluir unidade no servidor:', err);
+    return false;
+  }
 }
 
 // 2. Salvar/Registrar novo cliente

@@ -1,246 +1,222 @@
-// @ts-ignore
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, onSnapshot, query, where, deleteDoc, doc } from 'firebase/firestore';
-import { Car, Calendar, Building2, AlertTriangle, XCircle, User } from 'lucide-react';
+import { AlertCircle, ArrowLeft } from 'lucide-react';
+import {
+  db,
+  collection,
+  addDoc,
+  doc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  firebaseConfig
+} from './firebase';
+import LoginOTP from './components/LoginOTP';
+import AdminMaster from './components/AdminMaster';
+import PainelLavaJato from './components/PainelLavaJato';
+import AppClientePWA from './components/AppClientePWA';
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
+export { db, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, firebaseConfig };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+export const URL_BASE_NETLIFY = 'https://hubwashgestaoparalavajato.netlify.app';
 
-export const URL_BASE_NETLIFY = 'https://netlify.app';
-
-interface UnidadeLavaJato {
-  id: string;
-  nomeFantasia: string;
+// Função segura para ler parâmetros de busca na URL
+function getParamSafe(name: string): string | null {
+  try {
+    if (typeof window === 'undefined' || !window.location || !window.location.search) {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const val = params.get(name);
+    return val ? val.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
 }
 
-interface Cliente {
-  id?: string;
-  nome: string;
-  email: string;
-  senhaAcesso: string;
-  unidadeVinculadaId: string;
-  contato: string;
-  modelo: string;
-  placa: string;
-  pontosFidelidade: number;
-}
+// Resolver o nome da unidade com proteção contra quebras e suporte a novos inquilinos
+function resolverNomeUnidade(slugParam: string | null): string {
+  if (!slugParam) {
+    return 'Pit Stop Lava Jato';
+  }
 
-interface Agendamento {
-  id: string;
-  unidadeId: string;
-  data: string;
-  horario: string;
-  veiculo: string;
-  servico: string;
-  status: string;
+  try {
+    const salvos = localStorage.getItem('hubwash_lava_jatos');
+    if (salvos) {
+      const lista = JSON.parse(salvos);
+      if (Array.isArray(lista) && lista.length > 0) {
+        const encontrada = lista.find((u: any) => {
+          const uId = String(u.id || '').trim().toLowerCase();
+          const uNome = String(u.nomeFantasia || '').trim().toLowerCase();
+          return uId === slugParam || uNome === slugParam;
+        });
+        if (encontrada && encontrada.nomeFantasia) {
+          return encontrada.nomeFantasia;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Erro ao resolver unidade no storage:', e);
+  }
+
+  // Se não encontrar no localStorage local do celular, gera um nome limpo e elegante a partir do slug
+  const nomeFormatado = slugParam
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ');
+
+  return nomeFormatado.toLowerCase().includes('lava')
+    ? nomeFormatado
+    : `${nomeFormatado} Lava Jato`;
 }
 
 export default function App() {
-  const [unidadeAtual, setUnidadeAtual] = useState<UnidadeLavaJato | null>(null);
-  const [modoVisao, setModoVisao] = useState<'gerente_empresa' | 'app_cliente'>('app_cliente');
-  const [carregando, setCarregando] = useState(true);
+  const unidadeSlug = getParamSafe('unidade');
+  const rotaSlug = getParamSafe('rota');
 
-  const [clientesBanco, setClientesBanco] = useState<Cliente[]>([]);
-  const [agendamentosBanco, setAgendamentosBanco] = useState<Agendamento[]>([]);
-
-  const [usuarioLogado, setUsuarioLogado] = useState<Cliente | null>(null);
-  const [telaClienteAtiva, setTelaClienteAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar'>('cadastro');
-  const [enviandoFormulario, setEnviandoFormulario] = useState(false);
-
-  const [cadEmail, setCadEmail] = useState('');
-  const [cadSenha, setCadSenha] = useState('');
-  const [cadNome, setCadNome] = useState('');
-  const [cadContato, setCadContato] = useState('');
-  const [cadModelo, setCadModelo] = useState('');
-  const [cadPlaca, setCadPlaca] = useState('');
+  // Inicialização inteligente com base na URL: se houver unidade na URL (QR Code), vai direto para o cliente
+  const [autenticado, setAutenticado] = useState<boolean>(() => {
+    return Boolean(unidadeSlug);
+  });
   
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginSenha, setLoginSenha] = useState('');
-  const [agendaData, setAgendaData] = useState('');
-  const [agendaHora, setAgendaHora] = useState('');
-  const [agendaServico, setAgendaServico] = useState('Lavagem Completa');
+  const [telaAtual, setTelaAtual] = useState<'lavajato' | 'master' | 'cliente'>(() => {
+    return Boolean(unidadeSlug) ? 'cliente' : 'master';
+  });
 
-  const bancoUnidades: UnidadeLavaJato[] = [
-    { id: 'ducha-express', nomeFantasia: 'Ducha Express Lava Jato' },
-    { id: 'ecobrilho', nomeFantasia: 'EcoBrilho Estética Automotiva' },
-    { id: 'pitstop', nomeFantasia: 'Pit Stop Lava Jato' }
-  ];
+  const [telaClienteInicial, setTelaClienteInicial] = useState<'login' | 'cadastro' | 'home'>(() => {
+    const sessaoSalva = typeof window !== 'undefined' ? localStorage.getItem('hubwash_cliente_sessao') : null;
+    if (sessaoSalva && rotaSlug !== 'cadastro' && rotaSlug !== 'login') return 'home';
+    if (rotaSlug === 'login') return 'login';
+    return 'cadastro';
+  });
 
+  const [unidadeSelecionada, setUnidadeSelecionada] = useState<string>(() => {
+    return resolverNomeUnidade(unidadeSlug);
+  });
+
+  const [erroApp, setErroApp] = useState<string | null>(null);
+
+  // Efeito de inicialização e validação das rotas multi-inquilino
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const slugURL = params.get('unidade');
-    const rotaURL = params.get('rota');
+    const uParam = params.get('unidade');
+    const rParam = params.get('rota');
 
-    let unidadeIdDefinida = '';
+    if (uParam) {
+      setAutenticado(true);
+      setTelaAtual('cliente');
+      setUnidadeSelecionada(resolverNomeUnidade(uParam.trim().toLowerCase()));
 
-    if (slugURL) {
-      unidadeIdDefinida = slugURL.toLowerCase().trim();
-      localStorage.setItem('hubwash_inquilino_preferido', unidadeIdDefinida);
-    } else {
-      unidadeIdDefinida = localStorage.getItem('hubwash_inquilino_preferido') || '';
-    }
+      const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
 
-    const unidadeLocalizada = bancoUnidades.find(u => u.id === unidadeIdDefinida);
-    if (unidadeLocalizada) {
-      setUnidadeAtual(unidadeLocalizada);
-      
-      if (rotaURL === 'cliente' || !slugURL) {
-        setModoVisao('app_cliente');
-        const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
-        if (sessaoSalva) {
-          setUsuarioLogado(JSON.parse(sessaoSalva));
-          setTelaClienteAtiva('home');
-        } else {
-          setTelaClienteAtiva('cadastro');
-        }
+      if (rParam?.toLowerCase() === 'login') {
+        setTelaClienteInicial('login');
+      } else if (rParam?.toLowerCase() === 'cadastro') {
+        setTelaClienteInicial('cadastro');
+      } else if (sessaoSalva) {
+        setTelaClienteInicial('home');
       } else {
-        setModoVisao('gerente_empresa');
+        setTelaClienteInicial('cadastro');
       }
     }
-    setCarregando(false);
   }, []);
 
-  useEffect(() => {
-    if (!unidadeAtual) return;
-
-    const qClientes = query(collection(db, 'clientes'), where('unidadeVinculadaId', '==', unidadeAtual.id));
-    const unsubClientes = onSnapshot(qClientes, (snapshot) => {
-      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Cliente));
-      setClientesBanco(lista);
-    });
-
-    const qAgendamentos = query(collection(db, 'agendamentos'), where('unidadeId', '==', unidadeAtual.id));
-    const unsubAgendamentos = onSnapshot(qAgendamentos, (snapshot) => {
-      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Agendamento));
-      setAgendamentosBanco(lista);
-    });
-
-    return () => {
-      unsubClientes();
-      unsubAgendamentos();
-    };
-  }, [unidadeAtual]);
-
-  const handleCadastroCliente = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cadNome || !cadEmail || !cadSenha || !cadPlaca || !unidadeAtual || enviandoFormulario) return;
-
-    setEnviandoFormulario(true);
-
-    try {
-      const novoCliente: Cliente = {
-        nome: cadNome,
-        email: cadEmail.toLowerCase().trim(),
-        senhaAcesso: cadSenha,
-        unidadeVinculadaId: unidadeAtual.id,
-        contato: cadContato,
-        modelo: cadModelo,
-        placa: cadPlaca.toUpperCase().trim(),
-        pontosFidelidade: 0
-      };
-
-      await addDoc(collection(db, 'clientes'), novoCliente);
-      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(novoCliente));
-      setUsuarioLogado(novoCliente);
-      setTelaClienteAtiva('home');
-      
-      setCadNome(''); setCadEmail(''); setCadSenha(''); setCadContato(''); setCadModelo(''); setCadPlaca('');
-      alert('Cadastro realizado com sucesso!');
-    } catch (erro) {
-      alert('Erro ao salvar no banco.');
-    } finally {
-      setEnviandoFormulario(false);
-    }
-  };
-
-  const handleLoginCliente = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginEmail || !loginSenha || !unidadeAtual) return;
-
-    const encontrado = clientesBanco.find(
-      c => c.email.toLowerCase().trim() === loginEmail.toLowerCase().trim()
-    );
-
-    if (encontrado) {
-      if (encontrado.senhaAcesso === loginSenha) {
-        localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(encontrado));
-        setUsuarioLogado(encontrado);
-        setTelaClienteAtiva('home');
-        alert(`Bem-vindo de volta, ${encontrado.nome}!`);
-      } else {
-        alert('❌ Senha incorreta.');
-      }
-    } else {
-      alert('❌ E-mail não localizado nesta unidade. Faça o cadastro.');
-      setTelaClienteAtiva('cadastro');
-    }
-  };
-
-  const handleAgendarServico = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!agendaData || !agendaHora || !unidadeAtual || !usuarioLogado || enviandoFormulario) return;
-
-    const jaOcupado = agendamentosBanco.some(ag => ag.data === agendaData && ag.horario === agendaHora);
-    if (jaOcupado) {
-      alert('Esse horário já foi preenchido!');
-      return;
-    }
-
-    setEnviandoFormulario(true);
-
-    try {
-      await addDoc(collection(db, 'agendamentos'), {
-        unidadeId: unidadeAtual.id,
-        data: agendaData,
-        horario: agendaHora,
-        veiculo: `${usuarioLogado.modelo} (${usuarioLogado.placa})`,
-        servico: agendaServico,
-        status: 'Pendente'
-      });
-
-      alert('Agendamento solicitado com sucesso!');
-      setTelaClienteAtiva('home');
-      setAgendaData(''); setAgendaHora('');
-    } catch (erro) {
-      alert('Erro ao agendar.');
-    } finally {
-      setEnviandoFormulario(false);
-    }
-  };
-
-  const handleCancelarAgendamento = async (id: string) => {
-    if (window.confirm('Deseja cancelar esse serviço?')) {
-      await deleteDoc(doc(db, 'agendamentos', id));
-      alert('Agendamento cancelado.');
-    }
-  };
-
-  if (carregando) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-xs font-mono text-slate-400">Conectando...</div>;
-  if (!unidadeAtual) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-xs font-bold text-white"><AlertTriangle className="mr-2 text-amber-400" /> Use o QR Code oficial.</div>;
-
-  if (modoVisao === 'app_cliente') {
+  // Tratamento de Erro Seguro em HTML Estruturado (fundo visível, sem travar o celular)
+  if (erroApp) {
     return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-0 sm:p-4">
-        <div className="w-full max-w-md bg-slate-800 min-h-screen sm:min-h-[700px] flex flex-col justify-between overflow-hidden sm:rounded-3xl border border-slate-700/60 shadow-2xl">
-          <header className="bg-slate-950 border-b border-slate-800 px-5 py-4 flex justify-between items-center">
-            <span className="font-bold text-xs text-white uppercase tracking-wider">{unidadeAtual.nomeFantasia}</span>
-            {usuarioLogado && <button onClick={() => { localStorage.removeItem('hubwash_cliente_sessao'); setUsuarioLogado(null); setTelaClienteAtiva('login'); }} className="text-[10px] bg-rose-500/10 border border-rose-500/20 text-rose-400 px-2 py-1 rounded-lg font-bold">Sair</button>}
-          </header>
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 font-sans antialiased">
+        <div className="w-full max-w-sm bg-slate-800 border border-slate-700 p-6 rounded-2xl text-center space-y-4 shadow-2xl">
+          <div className="bg-rose-500/10 p-3 rounded-full text-rose-400 w-12 h-12 flex items-center justify-center mx-auto border border-rose-500/20">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-base font-bold text-white">Ops! Algo deu errado</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">{erroApp}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setErroApp(null);
+              setAutenticado(false);
+              setTelaAtual('master');
+            }}
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-2"
+          >
+            <ArrowLeft size={14} />
+            <span>Voltar ao Início</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-          <main className="flex-1 p-5 overflow-y-auto space-y-4">
-            {telaClienteAtiva === 'cadastro' && (
-              <form onSubmit={handleCadastroCliente} className="space-y-3 text-xs font-semibold">
-                <div className="text-center bg-blue-500/5 border border-blue-500/10 p-3 rounded-xl mb-2 text-blue-400 text-[11px]">Primeiro acesso: Faça seu cadastro rápido</div>
-                <input type="email" required value={cadEmail} onChange={e => setCadEmail(e.target.value)} placeholder="Seu melhor E-mail *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />
-                <input type="password" required value={cadSenha} onChange={e => setCadSenha(e.target.value)} placeholder="Crie sua Senha *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />
-                <input type="text" required value={cadNome} onChange={e => setCadNome(e.target.value)} placeholder="Nome Completo *" className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white" />
+  // TELA DE AUTENTICAÇÃO / LOGIN OTP
+  if (!autenticado) {
+    return (
+      <LoginOTP
+        onSuccess={(role, unidadeNome, telaCliente) => {
+          setAutenticado(true);
+          if (role === 'master') {
+            setTelaAtual('master');
+          } else if (role === 'cliente') {
+            if (unidadeNome) setUnidadeSelecionada(unidadeNome);
+            if (telaCliente) setTelaClienteInicial(telaCliente);
+            setTelaAtual('cliente');
+          } else {
+            if (unidadeNome) {
+              setUnidadeSelecionada(unidadeNome);
+            }
+            setTelaAtual('lavajato');
+          }
+        }}
+      />
+    );
+  }
+
+  // TELA: APLICATIVO DO CLIENTE (PWA)
+  if (telaAtual === 'cliente') {
+    return (
+      <AppClientePWA
+        unidadeNome={unidadeSelecionada}
+        telaInicial={telaClienteInicial}
+        onVoltarLogin={() => {
+          setAutenticado(false);
+        }}
+      />
+    );
+  }
+
+  // TELA: ADMIN MASTER (HUBWASH)
+  if (telaAtual === 'master') {
+    return (
+      <AdminMaster
+        onLogout={() => {
+          setAutenticado(false);
+        }}
+        onIrParaLavaJato={(nome?: string) => {
+          if (nome) setUnidadeSelecionada(nome);
+          setTelaAtual('lavajato');
+        }}
+        onIrParaCliente={(nome?: string) => {
+          if (nome) setUnidadeSelecionada(nome);
+          setTelaClienteInicial('home');
+          setTelaAtual('cliente');
+        }}
+      />
+    );
+  }
+
+  // TELA: PAINEL OPERACIONAL LAVA JATO
+  return (
+    <PainelLavaJato
+      unidadeNome={unidadeSelecionada}
+      onLogout={() => {
+        setAutenticado(false);
+      }}
+    />
+  );
+}

@@ -1,25 +1,39 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Regra para Clientes
-    match /clientes/{clienteId} {
-      allow read, write: if true;
-    }
 
-    // Regra para Agendamentos
-    match /agendamentos/{agendamentoId} {
-      allow read, write: if true;
-    }
-
-    // Regra para Unidades / Lava-Jatos
+    // 🏢 UNIDADES / LAVA-JATOS
     match /unidades/{unidadeId} {
+      allow read: if true;
+      allow write: if request.resource.data.nomeFantasia is string 
+                   && request.resource.data.nomeFantasia.size() > 0;
+    }
+
+    // 👤 CLIENTES (Cadastro via celular PWA / QR Code e balcão)
+    match /clientes/{clienteId} {
+      allow read: if true;
+      allow create: if request.resource.data.nome is string 
+                    && request.resource.data.email is string;
+      allow update, delete: if true;
+    }
+
+    // 📅 AGENDAMENTOS (Agendamento online e fila)
+    match /agendamentos/{agendamentoId} {
+      allow read: if true;
+      allow create: if request.resource.data.cliente is string;
+      allow update, delete: if true;
+    }
+
+    // 🔌 TESTE DE CONEXÃO
+    match /teste_conexao/{docId} {
       allow read, write: if true;
     }
 
-    // Default permissivo para desenvolvimento e testes
+    // 🛑 BLOQUEIO PADRÃO: Impede criação de coleções desconhecidas ou invasão
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }
+
 

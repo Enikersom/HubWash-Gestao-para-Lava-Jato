@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserPlus, LogIn } from 'lucide-react';
 import { buscarUnidadesServidor } from '../services/apiSync';
+import { db, collection, getDocs } from '../firebase';
 
 interface LoginOTPProps {
   onSuccess: (role?: 'master' | 'lavajato' | 'cliente', unidadeNome?: string, telaCliente?: 'login' | 'cadastro' | 'home') => void;
@@ -20,15 +21,42 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
 
   const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Carrega lista atualizada de unidades do servidor ao montar tela de login
+  // Carrega lista atualizada de unidades do Firestore e do servidor ao montar tela de login
   useEffect(() => {
-    buscarUnidadesServidor().then(unidades => {
-      if (Array.isArray(unidades) && unidades.length > 0) {
+    const carregarUnidades = async () => {
+      let unidadesEncontradas: any[] = [];
+
+      // 1. Tenta buscar do Cloud Firestore
+      if (db) {
         try {
-          localStorage.setItem('hubwash_lava_jatos', JSON.stringify(unidades));
+          const snap = await getDocs(collection(db, 'unidades'));
+          snap.forEach(docSnap => {
+            unidadesEncontradas.push({ id: docSnap.id, ...docSnap.data() });
+          });
+        } catch (err) {
+          console.warn('Erro ao ler unidades do Firestore no login:', err);
+        }
+      }
+
+      // 2. Tenta buscar do servidor backend se Firestore não trouxe
+      if (unidadesEncontradas.length === 0) {
+        try {
+          const doServidor = await buscarUnidadesServidor();
+          if (Array.isArray(doServidor) && doServidor.length > 0) {
+            unidadesEncontradas = doServidor;
+          }
         } catch {}
       }
-    }).catch(() => {});
+
+      // 3. Salva no cache local do dispositivo
+      if (unidadesEncontradas.length > 0) {
+        try {
+          localStorage.setItem('hubwash_lava_jatos', JSON.stringify(unidadesEncontradas));
+        } catch {}
+      }
+    };
+
+    carregarUnidades();
   }, []);
 
   // Focus first input on mount
@@ -112,24 +140,57 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
 
     // 2. Verificação dinâmica com lava-jatos cadastrados no banco
     let unidadeEncontrada: any = null;
+    const fullOtpLower = fullOtp.toLowerCase();
+
     try {
-      // Tenta obter do servidor primeiro
-      const doServidor = await buscarUnidadesServidor();
-      let lista = Array.isArray(doServidor) && doServidor.length > 0 ? doServidor : [];
-      
-      if (lista.length === 0) {
-        const salvos = localStorage.getItem('hubwash_lava_jatos');
-        if (salvos) {
-          lista = JSON.parse(salvos);
+      // A. Consulta Firestore diretamente para garantir login no celular e em computadores novos
+      if (db) {
+        try {
+          const snap = await getDocs(collection(db, 'unidades'));
+          snap.forEach(docSnap => {
+            const data = docSnap.data();
+            const senhaSalva = String(data.senhaProvisoria || '').trim();
+            if (senhaSalva && (senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower)) {
+              unidadeEncontrada = { id: docSnap.id, ...data };
+            }
+          });
+        } catch (fErr) {
+          console.warn('Erro ao consultar Firestore no login:', fErr);
         }
       }
 
-      if (Array.isArray(lista)) {
-        const fullOtpLower = fullOtp.toLowerCase();
-        unidadeEncontrada = lista.find((u: any) => {
-          const senhaSalva = String(u.senhaProvisoria || '').trim();
-          return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
-        });
+      // B. Se não encontrou, tenta obter do cache local
+      if (!unidadeEncontrada) {
+        const salvos = localStorage.getItem('hubwash_lava_jatos');
+        if (salvos) {
+          const lista = JSON.parse(salvos);
+          if (Array.isArray(lista)) {
+            unidadeEncontrada = lista.find((u: any) => {
+              const senhaSalva = String(u.senhaProvisoria || '').trim();
+              return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
+            });
+          }
+        }
+      }
+
+      // C. Se não encontrou, tenta servidor
+      if (!unidadeEncontrada) {
+        const doServidor = await buscarUnidadesServidor();
+        if (Array.isArray(doServidor) && doServidor.length > 0) {
+          unidadeEncontrada = doServidor.find((u: any) => {
+            const senhaSalva = String(u.senhaProvisoria || '').trim();
+            return senhaSalva === fullOtp || senhaSalva.toLowerCase() === fullOtpLower;
+          });
+        }
+      }
+
+      // D. Senha padrão de teste do Pit Stop caso seja a primeira execução sem banco carregado
+      if (!unidadeEncontrada && fullOtpLower === 'pit123') {
+        unidadeEncontrada = {
+          id: 'pitstop',
+          nomeFantasia: 'Pit Stop Lava Jato',
+          statusPlano: 'ativo'
+        };
       }
     } catch (e) {
       console.error(e);
@@ -175,11 +236,11 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
       if (salvos) {
         const lista = JSON.parse(salvos);
         if (Array.isArray(lista) && lista.length > 0) {
-          return lista[0].nomeFantasia;
+          return lista[0].nomeFantasia || 'Pit Stop Lava Jato';
         }
       }
     } catch {}
-    return 'Lava Jato';
+    return 'Pit Stop Lava Jato';
   };
 
   return (
@@ -187,6 +248,23 @@ export default function LoginOTP({ onSuccess, defaultRole = 'master' }: LoginOTP
       <div className="otp-card">
         {!isSuccess ? (
           <div id="otpForm">
+            <div className="flex justify-center mb-3">
+              <img
+                src="/logo.png"
+                alt="Logo HubWash"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src.endsWith('/logo.png')) {
+                    target.src = '/pwa-512x512.png';
+                  } else if (target.src.endsWith('/pwa-512x512.png')) {
+                    target.src = '/hubwash.png';
+                  } else {
+                    target.style.display = 'none';
+                  }
+                }}
+                className="h-16 w-auto max-w-[220px] object-contain drop-shadow-md"
+              />
+            </div>
             <div className="lock">🔐</div>
             <h1>Terminal de Acesso</h1>
             <p className="description">

@@ -49,15 +49,35 @@ export interface AgendamentoSync {
   createdAt?: string;
 }
 
+// Helper seguro para chamadas à API com timeout e validação de JSON (previne travamento e erro de HTML no Netlify)
+async function fetchApiSegura(url: string, options: RequestInit = {}): Promise<Response | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
+      return res;
+    }
+  } catch {}
+  return null;
+}
+
 // 1. Obter dados completos sincronizados da unidade
 export async function buscarDadosSincronizados(unidadeId?: string) {
   try {
     const url = unidadeId ? `/api/sync?unidadeId=${encodeURIComponent(unidadeId)}` : '/api/sync';
-    const res = await fetch(url, {
+    const res = await fetchApiSegura(url, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     });
-    if (res.ok) {
+    if (res) {
       return await res.json();
     }
   } catch (err) {
@@ -69,11 +89,11 @@ export async function buscarDadosSincronizados(unidadeId?: string) {
 // --- GESTÃO DE UNIDADES (SaaS) ---
 export async function buscarUnidadesServidor(): Promise<LavaJato[]> {
   try {
-    const res = await fetch('/api/unidades', {
+    const res = await fetchApiSegura('/api/unidades', {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     });
-    if (res.ok) {
+    if (res) {
       return await res.json();
     }
   } catch (err) {
@@ -84,12 +104,12 @@ export async function buscarUnidadesServidor(): Promise<LavaJato[]> {
 
 export async function salvarUnidadeServidor(unidade: LavaJato): Promise<LavaJato | null> {
   try {
-    const res = await fetch('/api/unidades', {
+    const res = await fetchApiSegura('/api/unidades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(unidade)
     });
-    if (res.ok) {
+    if (res) {
       return await res.json();
     }
   } catch (err) {
@@ -100,12 +120,12 @@ export async function salvarUnidadeServidor(unidade: LavaJato): Promise<LavaJato
 
 export async function atualizarStatusUnidadeServidor(id: string, statusPlano: 'ativo' | 'teste' | 'bloqueado'): Promise<boolean> {
   try {
-    const res = await fetch(`/api/unidades/${encodeURIComponent(id)}`, {
+    const res = await fetchApiSegura(`/api/unidades/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ statusPlano })
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     console.warn('Erro ao atualizar status da unidade no servidor:', err);
     return false;
@@ -114,10 +134,10 @@ export async function atualizarStatusUnidadeServidor(id: string, statusPlano: 'a
 
 export async function excluirUnidadeServidor(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/unidades/${encodeURIComponent(id)}`, {
+    const res = await fetchApiSegura(`/api/unidades/${encodeURIComponent(id)}`, {
       method: 'DELETE'
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     console.warn('Erro ao excluir unidade no servidor:', err);
     return false;
@@ -127,12 +147,12 @@ export async function excluirUnidadeServidor(id: string): Promise<boolean> {
 // 2. Salvar/Registrar novo cliente
 export async function registrarClienteServidor(cliente: ClienteSync): Promise<ClienteSync | null> {
   try {
-    const res = await fetch('/api/clientes', {
+    const res = await fetchApiSegura('/api/clientes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cliente)
     });
-    if (res.ok) {
+    if (res) {
       return await res.json();
     }
   } catch (err) {
@@ -144,12 +164,12 @@ export async function registrarClienteServidor(cliente: ClienteSync): Promise<Cl
 // 3. Atualizar Pontos de Fidelidade do Cliente (Apenas Administrador)
 export async function atualizarPontosClienteServidor(idOuEmail: string, pontos: number): Promise<boolean> {
   try {
-    const res = await fetch(`/api/clientes/${encodeURIComponent(idOuEmail)}/pontos`, {
+    const res = await fetchApiSegura(`/api/clientes/${encodeURIComponent(idOuEmail)}/pontos`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pontos })
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     console.warn('Erro ao atualizar pontos no servidor:', err);
     return false;
@@ -159,12 +179,12 @@ export async function atualizarPontosClienteServidor(idOuEmail: string, pontos: 
 // 4. Salvar Agendamento
 export async function salvarAgendamentoServidor(agendamento: AgendamentoSync): Promise<AgendamentoSync | null> {
   try {
-    const res = await fetch('/api/agendamentos', {
+    const res = await fetchApiSegura('/api/agendamentos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(agendamento)
     });
-    if (res.ok) {
+    if (res) {
       return await res.json();
     }
   } catch (err) {
@@ -176,12 +196,12 @@ export async function salvarAgendamentoServidor(agendamento: AgendamentoSync): P
 // 5. Atualizar Status do Agendamento
 export async function atualizarStatusAgendamentoServidor(id: string, status: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/agendamentos/${encodeURIComponent(id)}`, {
+    const res = await fetchApiSegura(`/api/agendamentos/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     return false;
   }
@@ -190,10 +210,10 @@ export async function atualizarStatusAgendamentoServidor(id: string, status: str
 // 6. Excluir/Cancelar Agendamento
 export async function excluirAgendamentoServidor(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/agendamentos/${encodeURIComponent(id)}`, {
+    const res = await fetchApiSegura(`/api/agendamentos/${encodeURIComponent(id)}`, {
       method: 'DELETE'
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     return false;
   }
@@ -202,10 +222,10 @@ export async function excluirAgendamentoServidor(id: string): Promise<boolean> {
 // 7. Excluir Cliente
 export async function excluirClienteServidor(idOuEmail: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/clientes/${encodeURIComponent(idOuEmail)}`, {
+    const res = await fetchApiSegura(`/api/clientes/${encodeURIComponent(idOuEmail)}`, {
       method: 'DELETE'
     });
-    return res.ok;
+    return Boolean(res);
   } catch (err) {
     return false;
   }

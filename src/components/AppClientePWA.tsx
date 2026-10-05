@@ -24,7 +24,8 @@ import {
   Info,
   CalendarCheck,
   ArrowLeft,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { db, collection, addDoc, onSnapshot, doc, deleteDoc, query, where, orderBy } from '../firebase';
 import { 
@@ -141,25 +142,29 @@ export default function AppClientePWA({
     return null;
   });
 
+  const [isCadastrando, setIsCadastrando] = useState(false);
+  const [isAgendando, setIsAgendando] = useState(false);
+
   useEffect(() => {
     if (usuarioLogado) {
       localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(usuarioLogado));
-    } else {
-      localStorage.removeItem('hubwash_cliente_sessao');
     }
   }, [usuarioLogado]);
 
   const [telaAtiva, setTelaAtiva] = useState<'cadastro' | 'login' | 'home' | 'agendar' | 'fidelidade'>(() => {
+    const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
+    if (sessaoSalva) {
+      return 'home';
+    }
     if (telaInicial) return telaInicial;
     try {
       const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
       const r = params?.get('rota')?.toLowerCase();
       const u = params?.get('unidade');
-      if (r === 'cadastro' || r === 'cliente' || u) return 'cadastro';
       if (r === 'login') return 'login';
+      if (r === 'cadastro' || r === 'cliente' || u) return 'cadastro';
     } catch {}
-    const sessao = localStorage.getItem('hubwash_cliente_sessao');
-    return sessao ? 'home' : 'cadastro';
+    return 'cadastro';
   });
 
   // Agendamentos persistentes
@@ -215,20 +220,10 @@ export default function AppClientePWA({
   const [cadPlaca, setCadPlaca] = useState('');
   const [cadCor, setCadCor] = useState('');
 
-  // ➡️ LÓGICA DE MEMÓRIA PERSISTENTE DO INQUILINO (MÁXIMA SEGURANÇA)
+  // ➡️ LÓGICA DE MEMÓRIA PERSISTENTE DO INQUILINO (RESOLUÇÃO DA UNIDADE)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const slugUnidadeDaURL = params.get('unidade');
-    const rotaDaURL = params.get('rota')?.toLowerCase();
-
-    // Direcionamento preciso de tela
-    if (telaInicial === 'cadastro' || rotaDaURL === 'cadastro' || rotaDaURL === 'cliente' || slugUnidadeDaURL) {
-      setTelaAtiva('cadastro');
-    } else if (telaInicial === 'login' || rotaDaURL === 'login') {
-      setTelaAtiva('login');
-    } else if (!usuarioLogado) {
-      setTelaAtiva('cadastro');
-    }
 
     if (slugUnidadeDaURL) {
       const slugLimpo = slugUnidadeDaURL.toLowerCase().trim();
@@ -284,7 +279,14 @@ export default function AppClientePWA({
       }
     }
     setCarregandoUnidade(false);
-  }, [bancoUnidades, unidadeNome, usuarioLogado, telaInicial]);
+  }, [bancoUnidades, unidadeNome]);
+
+  // Transição garantida para Home quando o usuário estiver autenticado
+  useEffect(() => {
+    if (usuarioLogado && (telaAtiva === 'cadastro' || telaAtiva === 'login')) {
+      setTelaAtiva('home');
+    }
+  }, [usuarioLogado]);
 
   // ID Padronizado da Unidade
   const unidadeIdNormalizada = (unidadeAtual?.id || unidadeNome || 'pitstop')
@@ -516,107 +518,158 @@ export default function AppClientePWA({
   // CADASTRO DE CLIENTE (SEMPRE INICIA COM 0 PONTOS)
   const handleCadastro = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCadastrando) return;
+
     if (!cadNome.trim() || !cadEmail.trim() || !cadSenha.trim() || !cadPlaca.trim() || !cadModelo.trim() || !unidadeAtual) {
       mostrarToast('Por favor, preencha os campos obrigatórios (*)', 'erro');
       return;
     }
 
-    if (bancoClientes.some(c => c.email.toLowerCase() === cadEmail.trim().toLowerCase() && (c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id))) {
-      mostrarToast('Este e-mail já possui cadastro nesta unidade! Faça o login.', 'erro');
-      setLoginEmail(cadEmail.trim());
-      setTelaAtiva('login');
+    const clienteExistente = bancoClientes.find(c => 
+      c.email.toLowerCase() === cadEmail.trim().toLowerCase() && 
+      (c.unidadeVinculadaId === unidadeIdNormalizada || c.unidadeVinculadaId === unidadeAtual.id)
+    );
+
+    if (clienteExistente) {
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(clienteExistente));
+      setUsuarioLogado(clienteExistente);
+      setTelaAtiva('home');
+      mostrarToast(`Bem-vindo(a) de volta, ${clienteExistente.nome}!`, 'sucesso');
       return;
     }
 
-    const veiculoTexto = `${cadModelo.trim()}${cadPlaca ? ` (${cadPlaca.trim().toUpperCase()})` : ''}`;
+    setIsCadastrando(true);
 
-    // ➡️ NOVO CLIENTE COMEÇA COM EXATAMENTE 0 PONTOS
-    const novoCliente: Cliente = {
-      nome: cadNome.trim(),
-      email: cadEmail.trim(),
-      senhaAcesso: cadSenha.trim(),
-      unidadeVinculadaId: unidadeIdNormalizada,
-      contato: cadContato.trim() || '(11) 99999-0000',
-      cep: cadCep.trim() || '01001-000',
-      cidade: cadCidade.trim() || 'São Paulo',
-      bairro: cadBairro.trim() || 'Centro',
-      estado: cadEstado.trim() || 'SP',
-      tipoVeiculo: cadTipo,
-      marca: cadMarca.trim() || 'Marca',
-      modelo: cadModelo.trim(),
-      ano: cadAno.trim() || '2023',
-      placa: cadPlaca.trim().toUpperCase(),
-      cor: cadCor.trim() || 'Prata',
-      pontosFidelidade: 0 // ➡️ 0 PONTOS INICIAIS (somente o administrador pontua)
-    };
-
-    // Salva no estado local e memória isolada do cliente
-    setBancoClientes([...bancoClientes, novoCliente]);
-    setUsuarioLogado(novoCliente);
-    setTelaAtiva('home');
-
-    // 1. Envia ao Servidor Central (sincronização imediata com notebook do administrador)
-    await registrarClienteServidor({
-      nome: novoCliente.nome,
-      email: novoCliente.email,
-      senhaAcesso: novoCliente.senhaAcesso,
-      unidadeVinculadaId: unidadeIdNormalizada,
-      contato: novoCliente.contato,
-      cep: novoCliente.cep,
-      cidade: novoCliente.cidade,
-      bairro: novoCliente.bairro,
-      estado: novoCliente.estado,
-      tipoVeiculo: novoCliente.tipoVeiculo,
-      marca: novoCliente.marca,
-      modelo: novoCliente.modelo,
-      ano: novoCliente.ano,
-      placa: novoCliente.placa,
-      cor: novoCliente.cor,
-      pontosFidelidade: 0,
-      pontos: 0,
-      veiculoPrincipal: veiculoTexto
-    });
-
-    // 2. Salva no localStorage compartilhado como fallback local
     try {
-      const salvosFidelidade = localStorage.getItem('hubwash_clientes_fidelidade');
-      const listaFid = salvosFidelidade ? JSON.parse(salvosFidelidade) : [];
-      const novoFid = {
-        id: String(Date.now()),
-        nome: novoCliente.nome,
-        email: novoCliente.email,
-        telefone: novoCliente.contato,
-        veiculoPrincipal: veiculoTexto,
-        pontos: 0,
-        totalGasto: 0,
+      const veiculoTexto = `${cadModelo.trim()}${cadPlaca ? ` (${cadPlaca.trim().toUpperCase()})` : ''}`;
+
+      // ➡️ NOVO CLIENTE COMEÇA COM EXATAMENTE 0 PONTOS
+      const novoCliente: Cliente = {
+        nome: cadNome.trim(),
+        email: cadEmail.trim(),
+        senhaAcesso: cadSenha.trim(),
         unidadeVinculadaId: unidadeIdNormalizada,
-        unidadeId: unidadeIdNormalizada
+        contato: cadContato.trim() || '(11) 99999-0000',
+        cep: cadCep.trim() || '01001-000',
+        cidade: cadCidade.trim() || 'São Paulo',
+        bairro: cadBairro.trim() || 'Centro',
+        estado: cadEstado.trim() || 'SP',
+        tipoVeiculo: cadTipo,
+        marca: cadMarca.trim() || 'Marca',
+        modelo: cadModelo.trim(),
+        ano: cadAno.trim() || '2023',
+        placa: cadPlaca.trim().toUpperCase(),
+        cor: cadCor.trim() || 'Prata',
+        pontosFidelidade: 0 // ➡️ 0 PONTOS INICIAIS (somente o administrador pontua)
       };
-      localStorage.setItem('hubwash_clientes_fidelidade', JSON.stringify([novoFid, ...listaFid.filter((c: any) => c.email !== novoCliente.email)]));
-    } catch (e) {
-      console.warn('Erro ao sincronizar localStorage fidelidade:', e);
-    }
 
-    // 3. Salva em tempo real no Firebase Firestore na coleção 'clientes'
-    try {
-      if (db) {
-        await addDoc(collection(db, 'clientes'), {
-          ...novoCliente,
+      // 💾 Persistência imediata do Usuário Logado na sessão do celular e transição instantânea
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(novoCliente));
+      setUsuarioLogado(novoCliente);
+      setBancoClientes(prev => [...prev.filter(c => c.email.toLowerCase() !== novoCliente.email.toLowerCase()), novoCliente]);
+
+      // 🛑 Transição instantânea para a Home (sem travar nem exigir 3 cliques)
+      setTelaAtiva('home');
+      mostrarToast(`🎉 Bem-vindo(a) ao ${unidadeAtual.nomeFantasia}, ${novoCliente.nome}!`, 'sucesso');
+
+      // 🧹 Zera os inputs do formulário de cadastro
+      setCadNome('');
+      setCadEmail('');
+      setCadSenha('');
+      setCadContato('');
+      setCadCep('');
+      setCadCidade('');
+      setCadBairro('');
+      setCadEstado('SP');
+      setCadMarca('');
+      setCadModelo('');
+      setCadAno('');
+      setCadPlaca('');
+      setCadCor('');
+
+      // Limpa os parâmetros de rota da URL para não resetar em caso de F5/reload
+      if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+        try {
+          const urlAtual = new URL(window.location.href);
+          urlAtual.searchParams.delete('rota');
+          window.history.replaceState({}, '', urlAtual.toString());
+        } catch {}
+      }
+
+      // 1. Salva no localStorage compartilhado de fidelidade
+      try {
+        const salvosFidelidade = localStorage.getItem('hubwash_clientes_fidelidade');
+        const listaFid = salvosFidelidade ? JSON.parse(salvosFidelidade) : [];
+        const novoFid = {
+          id: String(Date.now()),
+          nome: novoCliente.nome,
+          email: novoCliente.email,
+          telefone: novoCliente.contato,
           veiculoPrincipal: veiculoTexto,
           pontos: 0,
-          pontosFidelidade: 0,
-          unidadeId: unidadeIdNormalizada,
+          totalGasto: 0,
           unidadeVinculadaId: unidadeIdNormalizada,
-          unidadeNome: unidadeAtual.nomeFantasia,
-          unidadeSlug: unidadeAtual.id,
-          createdAt: new Date().toISOString()
-        });
+          unidadeId: unidadeIdNormalizada
+        };
+        localStorage.setItem('hubwash_clientes_fidelidade', JSON.stringify([novoFid, ...listaFid.filter((c: any) => c.email !== novoCliente.email)]));
+      } catch (e) {
+        console.warn('Erro ao sincronizar localStorage fidelidade:', e);
       }
-    } catch (firebaseErr) {
-      console.warn('Registro salvo localmente / servidor central:', firebaseErr);
-    }
 
-    mostrarToast(`🎉 Cadastro efetuado com sucesso no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
+      // 2. Sincronização em segundo plano no Firebase e Servidor (sem travar o app do cliente)
+      const salvarDadosServidorEFirebase = async () => {
+        try {
+          await registrarClienteServidor({
+            nome: novoCliente.nome,
+            email: novoCliente.email,
+            senhaAcesso: novoCliente.senhaAcesso,
+            unidadeVinculadaId: unidadeIdNormalizada,
+            contato: novoCliente.contato,
+            cep: novoCliente.cep,
+            cidade: novoCliente.cidade,
+            bairro: novoCliente.bairro,
+            estado: novoCliente.estado,
+            tipoVeiculo: novoCliente.tipoVeiculo,
+            marca: novoCliente.marca,
+            modelo: novoCliente.modelo,
+            ano: novoCliente.ano,
+            placa: novoCliente.placa,
+            cor: novoCliente.cor,
+            pontosFidelidade: 0,
+            pontos: 0,
+            veiculoPrincipal: veiculoTexto
+          });
+        } catch (sErr) {
+          console.warn('Sync servidor:', sErr);
+        }
+
+        try {
+          if (db) {
+            await addDoc(collection(db, 'clientes'), {
+              ...novoCliente,
+              veiculoPrincipal: veiculoTexto,
+              pontos: 0,
+              pontosFidelidade: 0,
+              unidadeId: unidadeIdNormalizada,
+              unidadeVinculadaId: unidadeIdNormalizada,
+              unidadeNome: unidadeAtual.nomeFantasia,
+              unidadeSlug: unidadeAtual.id,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (fErr) {
+          console.warn('Sync Firestore cliente:', fErr);
+        }
+      };
+
+      // Executa sincronização em background
+      salvarDadosServidorEFirebase();
+    } catch (err) {
+      console.error('Erro no fluxo de cadastro:', err);
+      mostrarToast('Ocorreu um problema ao salvar seu cadastro. Tente novamente.', 'erro');
+    } finally {
+      setIsCadastrando(false);
+    }
   };
 
   // ➡️ LOGIN INDIVIDUAL DO CLIENTE (SEM EXPOSIÇÃO DE OUTROS CLIENTES)
@@ -642,6 +695,7 @@ export default function AppClientePWA({
     );
 
     if (clienteLocalizado) {
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(clienteLocalizado));
       setUsuarioLogado(clienteLocalizado);
       setTelaAtiva('home');
       mostrarToast(`Bem-vindo(a), ${clienteLocalizado.nome}!`, 'sucesso');
@@ -665,15 +719,27 @@ export default function AppClientePWA({
         cor: 'Preto',
         pontosFidelidade: 0 // ➡️ 0 PONTOS
       };
+      localStorage.setItem('hubwash_cliente_sessao', JSON.stringify(clienteDemo));
       setBancoClientes(prev => [...prev, clienteDemo]);
       setUsuarioLogado(clienteDemo);
       setTelaAtiva('home');
       mostrarToast(`Acesso autenticado no ${unidadeAtual.nomeFantasia}!`, 'sucesso');
     }
+
+    // Limpa parâmetro de rota da URL para manter sessão limpa
+    try {
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        const urlAtual = new URL(window.location.href);
+        urlAtual.searchParams.delete('rota');
+        window.history.replaceState({}, '', urlAtual.toString());
+      }
+    } catch {}
   };
 
   const handleAgendarServico = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isAgendando) return;
+
     if (!agendaData || !agendaHora || !unidadeAtual || !usuarioLogado) {
       mostrarToast('Selecione a data e o horário desejados.', 'erro');
       return;
@@ -688,77 +754,92 @@ export default function AppClientePWA({
       return;
     }
 
-    const veiculoCompleto = usuarioLogado.modelo
-      ? `${usuarioLogado.modelo}${usuarioLogado.placa ? ` (Placa: ${usuarioLogado.placa})` : ''}`
-      : (usuarioLogado.placa ? `Placa: ${usuarioLogado.placa}` : 'Veículo Cadastrado');
+    setIsAgendando(true);
 
-    const tempId = String(Date.now());
-    const novoAgendamento: Agendamento = {
-      id: tempId,
-      unidadeId: unidadeIdNormalizada,
-      cliente: usuarioLogado.nome || 'Cliente',
-      telefone: usuarioLogado.contato || '(11) 99999-0000',
-      email: usuarioLogado.email || '',
-      data: agendaData,
-      horario: agendaHora,
-      veiculo: veiculoCompleto,
-      servico: agendaServico,
-      status: 'Pendente'
-    };
-
-    setTodosAgendamentos([novoAgendamento, ...todosAgendamentos]);
-    
-    // 1. Envia diretamente ao Servidor Central (sincronização imediata com o notebook no escritório)
-    await salvarAgendamentoServidor({
-      id: tempId,
-      unidadeId: unidadeIdNormalizada,
-      cliente: novoAgendamento.cliente || 'Cliente',
-      telefone: novoAgendamento.telefone || '(11) 99999-0000',
-      email: novoAgendamento.email,
-      data: novoAgendamento.data,
-      horario: novoAgendamento.horario,
-      veiculo: novoAgendamento.veiculo,
-      servico: novoAgendamento.servico,
-      status: 'Pendente'
-    });
-
-    // 2. Salva no localStorage compartilhado como fallback
     try {
-      const salvosPainel = localStorage.getItem('hubwash_agendamentos_painel');
-      const listaPainel = salvosPainel ? JSON.parse(salvosPainel) : [];
-      localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify([novoAgendamento, ...listaPainel.filter((a: any) => a.id !== tempId)]));
-    } catch {}
+      const veiculoCompleto = usuarioLogado.modelo
+        ? `${usuarioLogado.modelo}${usuarioLogado.placa ? ` (Placa: ${usuarioLogado.placa})` : ''}`
+        : (usuarioLogado.placa ? `Placa: ${usuarioLogado.placa}` : 'Veículo Cadastrado');
 
-    // 3. Grava o documento em tempo real no Firebase Firestore na coleção 'agendamentos'
-    try {
-      if (db) {
-        const docRef = await addDoc(collection(db, 'agendamentos'), {
-          unidadeId: unidadeIdNormalizada,
-          unidadeVinculadaId: unidadeIdNormalizada,
-          unidadeNome: unidadeAtual.nomeFantasia,
-          unidadeSlug: unidadeAtual.id,
-          cliente: usuarioLogado.nome || 'Cliente',
-          telefone: usuarioLogado.contato || '',
-          email: usuarioLogado.email || '',
-          veiculo: veiculoCompleto,
-          servico: agendaServico,
-          data: agendaData,
-          horario: agendaHora,
-          status: 'Pendente',
-          createdAt: new Date().toISOString()
-        });
+      const tempId = String(Date.now());
+      const novoAgendamento: Agendamento = {
+        id: tempId,
+        unidadeId: unidadeIdNormalizada,
+        cliente: usuarioLogado.nome || 'Cliente',
+        telefone: usuarioLogado.contato || '(11) 99999-0000',
+        email: usuarioLogado.email || '',
+        data: agendaData,
+        horario: agendaHora,
+        veiculo: veiculoCompleto,
+        servico: agendaServico,
+        status: 'Pendente'
+      };
 
-        if (docRef?.id) {
-          setTodosAgendamentos(prev => prev.map(ag => ag.id === tempId ? { ...ag, id: docRef.id } : ag));
+      setTodosAgendamentos(prev => [novoAgendamento, ...prev]);
+
+      // 🛑 Limpa os estados de data e hora imediatamente e volta para Home para evitar cliques duplicados
+      const dataAgendada = agendaData;
+      const horaAgendada = agendaHora;
+      const servicoAgendado = agendaServico;
+      setAgendaHora('');
+      setAgendaData(hojeString);
+      setTelaAtiva('home');
+      
+      // 1. Envia diretamente ao Servidor Central (sincronização imediata com o notebook no escritório)
+      await salvarAgendamentoServidor({
+        id: tempId,
+        unidadeId: unidadeIdNormalizada,
+        cliente: novoAgendamento.cliente || 'Cliente',
+        telefone: novoAgendamento.telefone || '(11) 99999-0000',
+        email: novoAgendamento.email,
+        data: dataAgendada,
+        horario: horaAgendada,
+        veiculo: novoAgendamento.veiculo,
+        servico: servicoAgendado,
+        status: 'Pendente'
+      });
+
+      // 2. Salva no localStorage compartilhado como fallback
+      try {
+        const salvosPainel = localStorage.getItem('hubwash_agendamentos_painel');
+        const listaPainel = salvosPainel ? JSON.parse(salvosPainel) : [];
+        localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify([novoAgendamento, ...listaPainel.filter((a: any) => a.id !== tempId)]));
+      } catch {}
+
+      // 3. Grava o documento em tempo real no Firebase Firestore na coleção 'agendamentos'
+      try {
+        if (db) {
+          const docRef = await addDoc(collection(db, 'agendamentos'), {
+            unidadeId: unidadeIdNormalizada,
+            unidadeVinculadaId: unidadeIdNormalizada,
+            unidadeNome: unidadeAtual.nomeFantasia,
+            unidadeSlug: unidadeAtual.id,
+            cliente: usuarioLogado.nome || 'Cliente',
+            telefone: usuarioLogado.contato || '',
+            email: usuarioLogado.email || '',
+            veiculo: veiculoCompleto,
+            servico: servicoAgendado,
+            data: dataAgendada,
+            horario: horaAgendada,
+            status: 'Pendente',
+            createdAt: new Date().toISOString()
+          });
+
+          if (docRef?.id) {
+            setTodosAgendamentos(prev => prev.map(ag => ag.id === tempId ? { ...ag, id: docRef.id } : ag));
+          }
         }
+      } catch (firebaseErr) {
+        console.warn('Agendamento salvo localmente / servidor:', firebaseErr);
       }
-    } catch (firebaseErr) {
-      console.warn('Agendamento salvo localmente / servidor:', firebaseErr);
-    }
 
-    mostrarToast('🎉 Serviço agendado com sucesso!', 'sucesso');
-    setTelaAtiva('home');
-    setAgendaHora('');
+      mostrarToast('🎉 Serviço agendado com sucesso!', 'sucesso');
+    } catch (err) {
+      console.error('Erro ao agendar serviço:', err);
+      mostrarToast('Ocorreu um problema ao registrar seu agendamento. Tente novamente.', 'erro');
+    } finally {
+      setIsAgendando(false);
+    }
   };
 
   const confirmarCancelamento = async () => {
@@ -908,6 +989,21 @@ export default function AppClientePWA({
         {/* TOPBAR DINÂMICO */}
         <header className="bg-slate-950 border-b border-slate-800/80 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
           <div className="flex items-center gap-2">
+            <img
+              src="/logo.png"
+              alt="Logo"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (target.src.endsWith('/logo.png')) {
+                  target.src = '/pwa-512x512.png';
+                } else if (target.src.endsWith('/pwa-512x512.png')) {
+                  target.src = '/hubwash.png';
+                } else {
+                  target.style.display = 'none';
+                }
+              }}
+              className="h-7 w-auto max-w-[80px] object-contain rounded-md shrink-0"
+            />
             <div className={`p-1.5 rounded-lg text-white shadow-md ${corTemaBadge}`}>
               <Building2 className="w-4 h-4" />
             </div>
@@ -954,6 +1050,23 @@ export default function AppClientePWA({
           {telaAtiva === 'cadastro' && (
             <div className="space-y-4">
               <div className="text-center space-y-1">
+                <div className="flex justify-center mb-1">
+                  <img
+                    src="/logo.png"
+                    alt="Logo"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (target.src.endsWith('/logo.png')) {
+                        target.src = '/pwa-512x512.png';
+                      } else if (target.src.endsWith('/pwa-512x512.png')) {
+                        target.src = '/hubwash.png';
+                      } else {
+                        target.style.display = 'none';
+                      }
+                    }}
+                    className="h-16 w-auto max-w-[200px] object-contain drop-shadow-md"
+                  />
+                </div>
                 <h2 className="text-base font-black text-white">Criar Novo Perfil</h2>
                 <p className="text-[11px] text-slate-400">Sua conta ficará salva e vinculada ao {unidadeAtual.nomeFantasia}.</p>
               </div>
@@ -1131,14 +1244,27 @@ export default function AppClientePWA({
                 <div className="pt-2 space-y-2">
                   <button
                     type="submit"
-                    className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer flex items-center justify-center gap-2 ${corTemaBtn}`}
+                    disabled={isCadastrando}
+                    className={`w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs flex items-center justify-center gap-2 ${
+                      isCadastrando ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-75' : `${corTemaBtn} cursor-pointer`
+                    }`}
                   >
-                    <CheckCircle size={15} />
-                    <span>Salvar Cadastro e Entrar</span>
+                    {isCadastrando ? (
+                      <>
+                        <RefreshCw size={15} className="animate-spin" />
+                        <span>Salvando Cadastro...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={15} />
+                        <span>Salvar Cadastro e Entrar</span>
+                      </>
+                    )}
                   </button>
 
                   <button
                     type="button"
+                    disabled={isCadastrando}
                     onClick={() => setTelaAtiva('login')}
                     className="w-full text-center text-[11px] text-slate-400 hover:text-blue-400 pt-1 cursor-pointer"
                   >
@@ -1155,6 +1281,23 @@ export default function AppClientePWA({
           {telaAtiva === 'login' && (
             <div className="space-y-4 py-2">
               <div className="text-center space-y-1">
+                <div className="flex justify-center mb-1">
+                  <img
+                    src="/logo.png"
+                    alt="Logo"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (target.src.endsWith('/logo.png')) {
+                        target.src = '/pwa-512x512.png';
+                      } else if (target.src.endsWith('/pwa-512x512.png')) {
+                        target.src = '/hubwash.png';
+                      } else {
+                        target.style.display = 'none';
+                      }
+                    }}
+                    className="h-16 w-auto max-w-[200px] object-contain drop-shadow-md"
+                  />
+                </div>
                 <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto shadow-lg">
                   <LogIn size={22} />
                 </div>
@@ -1469,13 +1612,24 @@ export default function AppClientePWA({
                 <div className="pt-2">
                   <button
                     type="submit"
-                    disabled={!agendaHora}
-                    className={`w-full py-3.5 rounded-xl font-bold uppercase tracking-wider text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
-                      agendaHora ? corTemaBtn : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    disabled={!agendaHora || isAgendando}
+                    className={`w-full py-3.5 rounded-xl font-bold uppercase tracking-wider text-xs transition shadow-lg flex items-center justify-center gap-2 ${
+                      !agendaHora || isAgendando
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-75'
+                        : `${corTemaBtn} cursor-pointer`
                     }`}
                   >
-                    <CheckCircle size={15} />
-                    <span>Confirmar Agendamento</span>
+                    {isAgendando ? (
+                      <>
+                        <RefreshCw size={15} className="animate-spin" />
+                        <span>Agendando Horário...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={15} />
+                        <span>Confirmar Agendamento</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </form>

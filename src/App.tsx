@@ -18,12 +18,14 @@ import LoginOTP from './components/LoginOTP';
 import AdminMaster from './components/AdminMaster';
 import PainelLavaJato from './components/PainelLavaJato';
 import AppClientePWA from './components/AppClientePWA';
+import SplashScreen from './components/SplashScreen';
 
 export { db, collection, addDoc, onSnapshot, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, firebaseConfig };
 
 export const URL_BASE_NETLIFY = 'https://hubwashgestaoparalavajato.netlify.app';
 
 // Função segura para ler parâmetros de busca na URL
+
 function getParamSafe(name: string): string | null {
   try {
     if (typeof window === 'undefined' || !window.location || !window.location.search) {
@@ -89,7 +91,7 @@ export default function App() {
 
   const [telaClienteInicial, setTelaClienteInicial] = useState<'login' | 'cadastro' | 'home'>(() => {
     const sessaoSalva = typeof window !== 'undefined' ? localStorage.getItem('hubwash_cliente_sessao') : null;
-    if (sessaoSalva && rotaSlug !== 'cadastro' && rotaSlug !== 'login') return 'home';
+    if (sessaoSalva) return 'home';
     if (rotaSlug === 'login') return 'login';
     return 'cadastro';
   });
@@ -99,6 +101,7 @@ export default function App() {
   });
 
   const [erroApp, setErroApp] = useState<string | null>(null);
+  const [mostrarSplash, setMostrarSplash] = useState<boolean>(true);
 
   // Efeito de inicialização e validação das rotas multi-inquilino
   useEffect(() => {
@@ -113,17 +116,20 @@ export default function App() {
 
       const sessaoSalva = localStorage.getItem('hubwash_cliente_sessao');
 
-      if (rParam?.toLowerCase() === 'login') {
-        setTelaClienteInicial('login');
-      } else if (rParam?.toLowerCase() === 'cadastro') {
-        setTelaClienteInicial('cadastro');
-      } else if (sessaoSalva) {
+      if (sessaoSalva) {
         setTelaClienteInicial('home');
+      } else if (rParam?.toLowerCase() === 'login') {
+        setTelaClienteInicial('login');
       } else {
         setTelaClienteInicial('cadastro');
       }
     }
   }, []);
+
+  // TELA SPLASH SCREEN (5 SEGUNDOS COM CONTAGEM REGRESSIVA)
+  if (mostrarSplash) {
+    return <SplashScreen onFinish={() => setMostrarSplash(false)} duracaoSegundos={5} />;
+  }
 
   // Tratamento de Erro Seguro em HTML Estruturado (fundo visível, sem travar o celular)
   if (erroApp) {
@@ -220,3 +226,4 @@ export default function App() {
     />
   );
 }
+

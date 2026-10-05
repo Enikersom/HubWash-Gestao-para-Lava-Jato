@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Menu,
   ChevronLeft,
@@ -44,9 +44,13 @@ import {
   X,
   UserPlus,
   Minus,
-  RotateCcw
+  RotateCcw,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  Database
 } from 'lucide-react';
-import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where, orderBy } from '../firebase';
+import { db, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where, orderBy, getDocs, getFirebaseStatus, salvarFirebaseConfig } from '../firebase';
 import { 
   buscarDadosSincronizados, 
   registrarClienteServidor, 
@@ -217,11 +221,39 @@ export default function PainelLavaJato({
     localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(agendamentos));
   }, [agendamentos]);
 
+  // Slug limpo e padronizado SEM ESPAÇOS nem caracteres especiais para links e QR Codes
+  const unidadeSlugSanitizada = useMemo(() => {
+    try {
+      const salvos = localStorage.getItem('hubwash_lava_jatos');
+      if (salvos) {
+        const lista = JSON.parse(salvos);
+        if (Array.isArray(lista)) {
+          const encontrada = lista.find((u: any) => 
+            String(u.nomeFantasia || '').toLowerCase().trim() === String(unidadeNome || '').toLowerCase().trim() ||
+            String(u.id || '').toLowerCase().trim() === String(unidadeNome || '').toLowerCase().trim()
+          );
+          if (encontrada && encontrada.id) {
+            return String(encontrada.id).toLowerCase().trim();
+          }
+        }
+      }
+    } catch {}
+
+    return (unidadeNome || 'pitstop')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'pitstop';
+  }, [unidadeNome]);
+
   // Helper para identificar a unidade logada padronizada e todos os seus apelidos/slugs
   const aliasesUnidade = useMemo(() => {
     const aliases = new Set<string>();
     const limpo = (unidadeNome || 'pitstop').trim().toLowerCase();
     aliases.add(limpo);
+    aliases.add(unidadeSlugSanitizada);
     
     const semAcento = limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     aliases.add(semAcento);
@@ -232,6 +264,9 @@ export default function PainelLavaJato({
     const slugSemTraco = semAcento.replace(/[^a-z0-9]/g, '');
     aliases.add(slugSemTraco);
 
+    // Adiciona palavras-chave individuais (ex: 'pit', 'stop') para não perder correspondência
+    semAcento.split(/[^a-z0-9]+/).filter(w => w.length > 2).forEach(p => aliases.add(p));
+
     try {
       const salvos = localStorage.getItem('hubwash_lava_jatos');
       if (salvos) {
@@ -241,7 +276,8 @@ export default function PainelLavaJato({
             String(u.id).toLowerCase() === limpo || 
             String(u.nomeFantasia).toLowerCase() === limpo ||
             String(u.id).toLowerCase() === slugComTraco ||
-            String(u.id).toLowerCase() === slugSemTraco
+            String(u.id).toLowerCase() === slugSemTraco ||
+            String(u.id).toLowerCase() === unidadeSlugSanitizada
           );
           if (encontrada) {
             if (encontrada.id) aliases.add(String(encontrada.id).toLowerCase());
@@ -252,17 +288,21 @@ export default function PainelLavaJato({
     } catch {}
 
     return Array.from(aliases).filter(Boolean);
-  }, [unidadeNome]);
+  }, [unidadeNome, unidadeSlugSanitizada]);
 
-  const unidadeLogada = aliasesUnidade[0] || 'pitstop';
+  const unidadeLogada = unidadeSlugSanitizada;
 
   // Modal de QR Code do Balcão para Cadastro de Clientes
   const [modalQrCode, setModalQrCode] = useState(false);
   const [copiadoQrLink, setCopiadoQrLink] = useState(false);
 
-  const linkQrCodeCliente = typeof window !== 'undefined' && window.location.origin.includes('netlify.app')
-    ? `${window.location.origin}/?unidade=${unidadeLogada}&rota=cadastro`
-    : `${URL_BASE_NETLIFY}/?unidade=${unidadeLogada}&rota=cadastro`;
+  // Link 100% HIGIENIZADO SEM ESPAÇOS (abre diretamente o navegador no celular, NUNCA o bloco de notas)
+  const linkQrCodeCliente = useMemo(() => {
+    const urlOrigem = typeof window !== 'undefined' && (window.location.origin.includes('netlify.app') || window.location.origin.startsWith('http'))
+      ? window.location.origin
+      : URL_BASE_NETLIFY;
+    return `${urlOrigem}/?unidade=${encodeURIComponent(unidadeSlugSanitizada)}&rota=cadastro`;
+  }, [unidadeSlugSanitizada]);
 
   const copiarLinkQrCode = () => {
     navigator.clipboard.writeText(linkQrCodeCliente);
@@ -271,15 +311,119 @@ export default function PainelLavaJato({
     setTimeout(() => setCopiadoQrLink(false), 2000);
   };
 
+  // Status da Nuvem Firebase (PC <-> Celular)
+  const [firebaseStatus, setFirebaseStatus] = useState(() => getFirebaseStatus());
+  const [modalFirebase, setModalFirebase] = useState(false);
+  const [firebaseApiKeyInput, setFirebaseApiKeyInput] = useState('');
+  const [firebaseProjectIdInput, setFirebaseProjectIdInput] = useState('');
+  const [firebaseJsonInput, setFirebaseJsonInput] = useState('');
+
+  // Sincronização Manual sob Demanda
+  const [sincronizandoManual, setSincronizandoManual] = useState(false);
+
+  const sincronizarAgendamentosAgora = async () => {
+    setSincronizandoManual(true);
+    try {
+      let carregados = 0;
+
+      // 1. Tenta buscar no Firebase Firestore
+      if (db) {
+        try {
+          const snap = await getDocs(collection(db, 'agendamentos'));
+          const agsFirestore: AgendamentoPWA[] = [];
+          snap.forEach((docSnap) => {
+            const data = docSnap.data();
+            const docUnidade = String(data.unidadeId || data.unidadeVinculadaId || data.unidadeSlug || data.unidadeNome || '').toLowerCase();
+            const pertence = !docUnidade || aliasesUnidade.some(alias => 
+              docUnidade === alias || docUnidade.includes(alias) || alias.includes(docUnidade)
+            );
+
+            if (pertence) {
+              const veiculoFormatado = data.veiculo || (data.modelo ? `${data.modelo}${data.placa ? ` (${data.placa})` : ''}` : 'Veículo Agendado');
+              agsFirestore.push({
+                id: docSnap.id,
+                cliente: data.cliente || data.nome || 'Cliente App',
+                telefone: data.telefone || data.contato || '(11) 99999-0000',
+                veiculo: veiculoFormatado,
+                servico: data.servico || 'Lavagem Completa',
+                data: data.data || 'Hoje',
+                horario: data.horario || '12:00',
+                status: (data.status as any) || 'Pendente'
+              });
+            }
+          });
+
+          if (agsFirestore.length > 0) {
+            setAgendamentos((prev) => {
+              const mapa = new Map<string, AgendamentoPWA>();
+              agsFirestore.forEach((a) => mapa.set(a.id, a));
+              prev.forEach((a) => {
+                if (!mapa.has(a.id)) mapa.set(a.id, a);
+              });
+              const final = Array.from(mapa.values());
+              try {
+                localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(final));
+              } catch {}
+              return final;
+            });
+            carregados += agsFirestore.length;
+          }
+        } catch (fErr) {
+          console.warn('Erro Firestore busca manual:', fErr);
+        }
+      }
+
+      // 2. Tenta servidor central se houver
+      try {
+        const dados = await buscarDadosSincronizados(unidadeLogada);
+        if (dados && Array.isArray(dados.agendamentos) && dados.agendamentos.length > 0) {
+          const agsServidor: AgendamentoPWA[] = dados.agendamentos.map((a: any) => ({
+            id: a.id,
+            cliente: a.cliente || 'Cliente App',
+            telefone: a.telefone || '(11) 99999-0000',
+            veiculo: a.veiculo || 'Veículo Agendado',
+            servico: a.servico || 'Lavagem Completa',
+            data: a.data || 'Hoje',
+            horario: a.horario || '12:00',
+            status: a.status || 'Pendente'
+          }));
+          setAgendamentos((prev) => {
+            const mapa = new Map<string, AgendamentoPWA>();
+            agsServidor.forEach((a) => mapa.set(a.id, a));
+            prev.forEach((a) => {
+              if (!mapa.has(a.id)) mapa.set(a.id, a);
+            });
+            const final = Array.from(mapa.values());
+            localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(final));
+            return final;
+          });
+          carregados += agsServidor.length;
+        }
+      } catch {}
+
+      if (carregados > 0) {
+        mostrarToast(`Sincronizado! ${carregados} agendamentos verificados na nuvem.`, 'sucesso');
+      } else {
+        mostrarToast('Sincronização concluída. Nenhum novo agendamento pendente.', 'info');
+      }
+    } catch (e) {
+      mostrarToast('Aviso: Verifique a conexão com o Firebase Firestore.', 'erro');
+    } finally {
+      setSincronizandoManual(false);
+    }
+  };
+
+  const isFirstLoadAgendamentos = useRef(true);
+
   // ➡️ SINCRONIZAÇÃO EM TEMPO REAL ENTRE MOBILE E COMPUTADOR/NOTEBOOK (API SERVIDOR + FIRESTORE)
   useEffect(() => {
     let ativo = true;
 
-    // 1. Sincronização periódica com o servidor central (Garante comunicação PC <-> Mobile)
+    // 1. Sincronização periódica com o servidor central (Garante comunicação PC <-> Mobile se ativo)
     const sincronizarComServidor = async () => {
       try {
         const dados = await buscarDadosSincronizados(unidadeLogada);
-        if (!ativo) return;
+        if (!ativo || !dados) return;
 
         if (dados.clientes && dados.clientes.length > 0) {
           const clientesMapeados: ClienteFidelidade[] = dados.clientes
@@ -347,14 +491,14 @@ export default function PainelLavaJato({
           });
         }
       } catch (err) {
-        console.warn('Sync server polling error (Painel):', err);
+        // Fallback silencioso
       }
     };
 
     sincronizarComServidor();
-    const intervalId = setInterval(sincronizarComServidor, 3000);
+    const intervalId = setInterval(sincronizarComServidor, 4000);
 
-    // 2. Ouvintes em tempo real do Firebase Firestore como canal secundário
+    // 2. Ouvintes em tempo real do Firebase Firestore (Canal direto PC <-> Mobile)
     let unsubClientes: (() => void) | null = null;
     let unsubAgendamentos: (() => void) | null = null;
 
@@ -395,9 +539,25 @@ export default function PainelLavaJato({
             if (clientesFirestore.length > 0) {
               setClientes((prev) => {
                 const mapa = new Map<string, ClienteFidelidade>();
-                prev.forEach((c) => mapa.set(c.id, c));
-                clientesFirestore.forEach((c) => mapa.set(c.id, c));
-                return Array.from(mapa.values());
+                const getChaveCliente = (c: ClienteFidelidade) => 
+                  (c.email && c.email.trim().toLowerCase()) || 
+                  (c.telefone && c.telefone.replace(/\D/g, '')) || 
+                  c.id;
+
+                clientesFirestore.forEach((c) => {
+                  mapa.set(getChaveCliente(c), c);
+                });
+                prev.forEach((c) => {
+                  const chave = getChaveCliente(c);
+                  if (!mapa.has(chave)) {
+                    mapa.set(chave, c);
+                  }
+                });
+                const listaFinal = Array.from(mapa.values());
+                try {
+                  localStorage.setItem('hubwash_clientes_fidelidade', JSON.stringify(listaFinal));
+                } catch {}
+                return listaFinal;
               });
             }
           },
@@ -436,12 +596,31 @@ export default function PainelLavaJato({
               }
             });
 
+            // Notifica em tempo real no PC se houver novo agendamento vindo do celular
+            if (!isFirstLoadAgendamentos.current && snapshot.docChanges) {
+              try {
+                snapshot.docChanges().forEach((change: any) => {
+                  if (change.type === 'added') {
+                    const d = change.doc.data();
+                    mostrarToast(`🔔 Novo agendamento via celular: ${d.cliente || 'Cliente'} às ${d.horario || ''} (${d.servico || 'Lavagem'})`, 'sucesso');
+                  }
+                });
+              } catch {}
+            }
+            isFirstLoadAgendamentos.current = false;
+
             if (agendamentosFirestore.length > 0) {
               setAgendamentos((prev) => {
                 const mapa = new Map<string, AgendamentoPWA>();
-                prev.forEach((a) => mapa.set(a.id, a));
                 agendamentosFirestore.forEach((a) => mapa.set(a.id, a));
-                return Array.from(mapa.values());
+                prev.forEach((a) => {
+                  if (!mapa.has(a.id)) mapa.set(a.id, a);
+                });
+                const listaFinal = Array.from(mapa.values());
+                try {
+                  localStorage.setItem('hubwash_agendamentos_painel', JSON.stringify(listaFinal));
+                } catch {}
+                return listaFinal;
               });
             }
           },
@@ -1124,15 +1303,26 @@ export default function PainelLavaJato({
                 {linkQrCodeCliente}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={copiarLinkQrCode}
-                  className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30"
+                  className="flex-1 min-w-[120px] py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30"
                 >
                   {copiadoQrLink ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
                   <span>{copiadoQrLink ? 'Copiado!' : 'Copiar Link'}</span>
                 </button>
+
+                <a
+                  href={linkQrCodeCliente}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold rounded-xl border border-slate-700 transition cursor-pointer flex items-center justify-center gap-1.5"
+                  title="Abrir a tela de cadastro do cliente em uma nova aba para testar"
+                >
+                  <Eye size={14} />
+                  <span>Testar Link</span>
+                </a>
 
                 <a
                   href={`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(linkQrCodeCliente)}&margin=10`}
@@ -1150,6 +1340,129 @@ export default function PainelLavaJato({
         </div>
       )}
 
+      {/* MODAL DE CONFIGURAÇÃO NUVEM FIREBASE (SINCRONIZAÇÃO PC <-> CELULAR) */}
+      {modalFirebase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 relative">
+            <button 
+              type="button" 
+              onClick={() => setModalFirebase(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition cursor-pointer p-1 rounded-lg hover:bg-slate-800"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="w-12 h-12 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center mx-auto">
+              <Database size={24} />
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-bold text-white">Sincronização em Tempo Real (Firebase)</h3>
+              <p className="text-xs text-slate-400">
+                Garante que os agendamentos e cadastros do celular apareçam no notebook instantaneamente pelo site da Netlify.
+              </p>
+            </div>
+
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs space-y-1.5">
+              <div className="flex items-center justify-between text-slate-300">
+                <span>Status Atual:</span>
+                <span className={`font-bold ${firebaseStatus.configurado ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {firebaseStatus.configurado ? '● Conectado (Nuvem Ativa)' : '● Modo Demonstração / Local'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                <span>Project ID:</span>
+                <span className="font-mono text-white">{firebaseStatus.projectId || 'Nenhum'}</span>
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                let novaConfig: any = null;
+
+                if (firebaseJsonInput.trim()) {
+                  try {
+                    // Tenta extrair JSON ou objeto colado
+                    let limpo = firebaseJsonInput.trim();
+                    if (limpo.includes('{') && limpo.includes('}')) {
+                      limpo = limpo.substring(limpo.indexOf('{'), limpo.lastIndexOf('}') + 1);
+                      // Converte formato chave: "valor" se não for JSON estrito
+                      limpo = limpo.replace(/([a-zA-Z0-9_]+)\s*:/g, '"$1":').replace(/'/g, '"');
+                    }
+                    novaConfig = JSON.parse(limpo);
+                  } catch (err) {
+                    mostrarToast('Erro ao ler JSON do Firebase. Cole os campos individuais.', 'erro');
+                    return;
+                  }
+                } else if (firebaseApiKeyInput.trim() && firebaseProjectIdInput.trim()) {
+                  novaConfig = {
+                    apiKey: firebaseApiKeyInput.trim(),
+                    projectId: firebaseProjectIdInput.trim(),
+                    authDomain: `${firebaseProjectIdInput.trim()}.firebaseapp.com`,
+                    storageBucket: `${firebaseProjectIdInput.trim()}.appspot.com`
+                  };
+                }
+
+                if (novaConfig && novaConfig.projectId) {
+                  salvarFirebaseConfig(novaConfig);
+                  mostrarToast('Configuração salva! Conectando ao Firestore...', 'sucesso');
+                } else {
+                  mostrarToast('Informe o Project ID e API Key do seu Firebase.', 'erro');
+                }
+              }}
+              className="space-y-3 text-xs"
+            >
+              <div>
+                <label className="block text-slate-400 font-medium mb-1">
+                  Cole o objeto do Firebase Console (ou preencha abaixo):
+                </label>
+                <textarea
+                  rows={3}
+                  value={firebaseJsonInput}
+                  onChange={(e) => setFirebaseJsonInput(e.target.value)}
+                  placeholder={'const firebaseConfig = {\n  apiKey: "...",\n  projectId: "..."\n};'}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-white font-mono text-[11px] focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Firebase Project ID</label>
+                  <input
+                    type="text"
+                    value={firebaseProjectIdInput}
+                    onChange={(e) => setFirebaseProjectIdInput(e.target.value)}
+                    placeholder="ex: meu-lavajato-123"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">API Key</label>
+                  <input
+                    type="text"
+                    value={firebaseApiKeyInput}
+                    onChange={(e) => setFirebaseApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 px-4 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-cyan-600/30"
+                >
+                  <Check size={14} />
+                  <span>Salvar e Conectar Nuvem</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MENUBAR LATERAL RECOLHÍVEL (SIDEBAR) */}
       <aside className={`bg-slate-900 border-r border-slate-800 flex flex-col justify-between transition-all duration-300 relative z-30 shrink-0 ${sidebarAberta ? 'w-64' : 'w-20'}`}>
         <div>
@@ -1157,8 +1470,23 @@ export default function PainelLavaJato({
           <div className="p-4 border-b border-slate-800 flex items-center justify-between">
             {sidebarAberta ? (
               <div className="flex items-center gap-2.5 overflow-hidden">
-                <div className={`p-2 rounded-xl ${temaClasses.bg} text-white shadow-lg`}>
-                  <Wrench className="w-5 h-5" />
+                <img
+                  src="/logo.png"
+                  alt="Logo"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.src.endsWith('/logo.png')) {
+                      target.src = '/pwa-192x192.png';
+                    } else if (target.src.endsWith('/pwa-192x192.png')) {
+                      target.src = '/hubwash.png';
+                    } else {
+                      target.style.display = 'none';
+                    }
+                  }}
+                  className="h-8 w-auto max-w-[80px] object-contain shrink-0 drop-shadow"
+                />
+                <div className={`p-1.5 rounded-lg ${temaClasses.bg} text-white shadow-lg hidden sm:flex`}>
+                  <Wrench className="w-4 h-4" />
                 </div>
                 <div className="truncate">
                   <span className="font-bold text-sm tracking-tight text-white block truncate">{nomeLavaJato}</span>
@@ -1166,9 +1494,19 @@ export default function PainelLavaJato({
                 </div>
               </div>
             ) : (
-              <div className={`p-2 rounded-xl ${temaClasses.bg} text-white mx-auto shadow-lg`}>
-                <Wrench className="w-5 h-5" />
-              </div>
+              <img
+                src="/logo.png"
+                alt="Logo"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src.endsWith('/logo.png')) {
+                    target.src = '/pwa-192x192.png';
+                  } else {
+                    target.style.display = 'none';
+                  }
+                }}
+                className="w-8 h-8 object-contain mx-auto drop-shadow"
+              />
             )}
             <button 
               type="button"
@@ -1244,6 +1582,27 @@ export default function PainelLavaJato({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* STATUS DE SINCRONIZAÇÃO NUVEM (FIRESTORE) */}
+            {firebaseStatus.configurado ? (
+              <span 
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-semibold"
+                title={`Conectado à nuvem Firebase: ${firebaseStatus.projectId}`}
+              >
+                <Wifi size={13} className="text-emerald-400" />
+                <span>Nuvem Ativa</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setModalFirebase(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer"
+                title="Configurar conexão direta com o Cloud Firestore"
+              >
+                <Database size={13} />
+                <span className="hidden sm:inline">Conectar Nuvem</span>
+              </button>
+            )}
+
             {/* BOTÃO QR CODE DO BALCÃO */}
             <button
               type="button"
@@ -1543,11 +1902,32 @@ export default function PainelLavaJato({
 
               {/* Lista de Agendamentos */}
               <div className="lg:col-span-2 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Smartphone className="w-4 h-4 text-cyan-400" /> Agendamentos Recebidos pelo App
-                </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-cyan-400" /> Agendamentos Recebidos pelo App ({agendamentos.length})
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={sincronizarAgendamentosAgora}
+                    disabled={sincronizandoManual}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition cursor-pointer self-start sm:self-auto"
+                    title="Forçar atualização da nuvem"
+                  >
+                    <RefreshCw size={13} className={sincronizandoManual ? "animate-spin" : ""} />
+                    <span>{sincronizandoManual ? "Buscando..." : "Sincronizar Celular / Nuvem"}</span>
+                  </button>
+                </div>
 
                 <div className="space-y-3">
+                  {agendamentos.length === 0 && (
+                    <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 text-center space-y-2">
+                      <Calendar className="w-8 h-8 text-slate-500 mx-auto" />
+                      <p className="text-xs font-bold text-white">Nenhum agendamento online no momento</p>
+                      <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                        Novos agendamentos feitos no celular aparecem aqui no mesmo instante. Se acabou de cadastrar no celular, clique no botão acima para sincronizar.
+                      </p>
+                    </div>
+                  )}
                   {agendamentos.map((ag) => (
                     <div
                       key={ag.id}
